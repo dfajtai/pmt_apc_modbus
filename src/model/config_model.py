@@ -11,10 +11,14 @@ class AppConfig(BaseModel):
     port: int = Field(..., gt=0, lt=65536, description="Port number")
     path: Path = Field(..., description="Path to database file")
 
-    query_delay_ms: int = Field(1000, gt=0, description="Delay between polls in milliseconds")
-    live_window_len: int = Field(120, gt=0, description="Number of data points in local deque")
-    moving_average_window_len: int = Field(5, gt=0, description="Moving average window size")
-    flow: float = Field(28300.0, description="Flow rate in ml/min")
+    sampling_time: int = Field(30*60, gt = 0, description = "Sampling time in seconds.")
+
+    timeout: int = Field(100,gt=0,description = "MODBUS async timeout in milliseconds.")
+    
+    query_delay_ms: int = Field(1000, gt=0, description="Delay between polls in milliseconds.")
+    live_window_len: int = Field(120, gt=0, description="Number of data points in local deque.")
+    moving_average_window_len: int = Field(5, gt=0, description="Moving average window size.")
+    flow: float = Field(28300.0, description="Flow rate in ml/min.")
 
     derived_metrics: bool = False
     log_enabled: bool = False
