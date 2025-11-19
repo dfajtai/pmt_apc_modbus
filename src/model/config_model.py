@@ -9,7 +9,7 @@ import json
 class AppConfig(BaseModel):
     ip: IPv4Address = Field(..., description="IPv4 address of the Modbus server")
     port: int = Field(..., gt=0, lt=65536, description="Port number")
-    path: Path = Field(..., description="Path to database file")
+    db_path: Path = Field(..., description="Path to database file")
 
     sampling_time: int = Field(30*60, gt = 0, description = "Sampling time in seconds.")
 
@@ -27,6 +27,6 @@ class AppConfig(BaseModel):
     @model_validator(mode="after")
     def check_path_exists(self):
         """Ensure the path exists unless allow_missing_path is True."""
-        if self.path and not self.path.exists() and not self.allow_missing_path:
-            raise ValueError(f"Path does not exist: {self.path}")
+        if self.db_path and not self.db_path.exists() and not self.allow_missing_path:
+            raise ValueError(f"Path does not exist: {self.db_path}")
         return self

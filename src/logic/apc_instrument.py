@@ -1,10 +1,11 @@
 from enum import Enum
 
 from dataclasses import dataclass
-
+import asyncio
 
 from model.config_model import AppConfig
 from services.modbus_query import ModbusQuery
+
 
 from services.modbus_connection import ModbusConnection
 from services.modbus_handler import ModbusHandler
@@ -17,10 +18,10 @@ from services.async_modbus_handler import AsyncModbusHandler
 class PmtApcInstrument:
 
     CHANNELS = [
-        ModbusQuery("timestamp",30310,2), # seconds
-        ModbusQuery("pc1",30312,2), # particle channel 1 (0.3um count @ given second ??)
-        ModbusQuery("pc2",30314,2), # particle channel 3 (5.0um count @ given second ??)
-        ModbusQuery("pc3",30316,2), # particle channel 2 (0.5um count @ given second ??)
+        ModbusQuery("timestamp",30310,2,dtype="uint32"), # seconds
+        ModbusQuery("pc1",30312,2,dtype="uint32"), # particle channel 1 (0.3um count @ given second ??)
+        ModbusQuery("pc2",30314,2,dtype="uint32"), # particle channel 3 (5.0um count @ given second ??)
+        ModbusQuery("pc3",30316,2,dtype="uint32"), # particle channel 2 (0.5um count @ given second ??)
     ]
 
 
@@ -110,3 +111,17 @@ class PmtApcInstrument:
     async def async_stop_sampling(self):
         control_query = ModbusQuery("control_sampling",2,1,writeable=True)
         await self.relay.write_coil(control_query,False)
+
+    # read data
+
+    async def async_read_channels(self, name_list = None):
+        if isinstance(name_list,list):
+            channels_to_read = [c for c in PmtApcInstrument.CHANNELS if c.channel_name in name_list]
+        else:
+            channels_to_read = PmtApcInstrument.CHANNELS[:]
+        
+        channel_names = [c.channel_name for c in channels_to_read]
+        values = await asyncio.gather(*[asyncio.create_task(self.relay.read_input(c)) for c in channels_to_read])
+
+        result = dict(zip(channel_names,values))
+        return result

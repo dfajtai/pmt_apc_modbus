@@ -10,7 +10,7 @@ class AppConfigHandler:
     DEFAULTS: Dict[str, object] = {
         "ip": "10.10.7.60",
         "port": 1502,
-        "path": "./records.db",
+        "db_path": "./records.db",
         "query_delay_ms": 1000,
         "live_window_len": 120,
         "moving_average_window_len": 5,
