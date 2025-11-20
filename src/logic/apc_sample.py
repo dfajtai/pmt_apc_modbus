@@ -22,6 +22,9 @@ class APCSample(BaseSample):
         )
 
     
+    def __getitem__(self, key):
+        return getattr(self, key)
+
     def __str__(self):
         return (f"{self.instrument_datetime}:\t"
                 f"pc1 = {self.pc1}\t|\tpc2 = {self.pc2}\t|\tpc3 = {self.pc3}")

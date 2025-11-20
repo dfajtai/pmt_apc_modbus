@@ -18,7 +18,6 @@ from services.async_modbus_handler import AsyncModbusHandler
 class PmtApcInstrument:
 
     CHANNELS = [
-        ModbusQuery("timestamp",30310,2,dtype="uint32"), # seconds
         ModbusQuery("pc1",30312,2,dtype="uint32"), # particle channel 1 (0.3um count @ given second ??)
         ModbusQuery("pc2",30314,2,dtype="uint32"), # particle channel 3 (5.0um count @ given second ??)
         ModbusQuery("pc3",30316,2,dtype="uint32"), # particle channel 2 (0.5um count @ given second ??)
@@ -57,13 +56,13 @@ class PmtApcInstrument:
         response = self.relay.read_coil(status_query)
         return PmtApcInstrument.DeviceStatus(response)
 
+    # control
+
     def read_flow(self):
         # SET flow not worked in modbus applications.
         flow_query =  ModbusQuery("read_flow",30022,2,dtype="uint32")
         response = self.relay.read_input(flow_query)
         return response
-
-    # control
 
     def start_sampling(self):
         control_query = ModbusQuery("control_sampling",2,1,writeable=True)
@@ -115,13 +114,15 @@ class PmtApcInstrument:
     # read data
 
     async def async_read_channels(self, name_list = None):
+        channels_to_read = [ModbusQuery("timestamp",30310,2,dtype="uint32")]
         if isinstance(name_list,list):
-            channels_to_read = [c for c in PmtApcInstrument.CHANNELS if c.channel_name in name_list]
+            channels_to_read += [c for c in PmtApcInstrument.CHANNELS if c.channel_name in name_list]
         else:
-            channels_to_read = PmtApcInstrument.CHANNELS[:]
+            channels_to_read += PmtApcInstrument.CHANNELS[:]
         
-        channel_names = [c.channel_name for c in channels_to_read]
-        values = await asyncio.gather(*[asyncio.create_task(self.relay.read_input(c)) for c in channels_to_read])
+        channel_names =[c.channel_name for c in channels_to_read]
 
+        values = await asyncio.gather(*[asyncio.create_task(self.relay.read_input(c)) for c in channels_to_read])
+     
         result = dict(zip(channel_names,values))
         return result

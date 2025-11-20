@@ -1,5 +1,6 @@
 from typing import Optional
 import asyncio
+import logging
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.exceptions import ConnectionException
 from model.config_model import AppConfig
@@ -7,7 +8,7 @@ from model.config_model import AppConfig
 
 class AsyncModbusConnection:
     """
-    Fully production-ready async Modbus TCP connection handler.
+    Lightweight async Modbus TCP connection handler.
     Handles:
     - async connect()
     - automatic reconnect
@@ -15,14 +16,16 @@ class AsyncModbusConnection:
     - graceful close()
     """
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, logger: Optional[logging.Logger] = None):
         self.config = config
         self.client: Optional[AsyncModbusTcpClient] = None
 
-        # belső lock a párhuzamos connect hívások ellen
+        self.logger: Optional[logging.Logger] = logger
+
+        # internal lock to block paralel calls
         self._connect_lock = asyncio.Lock()
 
-        # belső flag hogy a user kérte-e a shutdown-t
+        # flag for closing
         self._closing = False
 
     # --------------------------------------------------------------
@@ -53,17 +56,17 @@ class AsyncModbusConnection:
         """
 
         async with self._connect_lock:
-            if self.is_connected:  # már csatlakozva
+            if self.is_connected:  # already connected
                 return True
 
-            # ha már van egy client példány, előtte zárjuk
+            # if there is a client already, lets close it
             if self.client:
                 try:
                     await self.client.close()
                 except Exception:
                     pass
 
-            # új async client
+            # create a nev client
             self.client = AsyncModbusTcpClient(
                 str(self.config.ip),
                 port=self.config.port,
@@ -75,6 +78,8 @@ class AsyncModbusConnection:
                 try:
                     ok = await self.client.connect()
                     if ok:
+                        if self.logger:
+                            self.logger.info("MODBUS connection successfull.")
                         return True
                     else:
                         raise ConnectionException("Connect returned False")
@@ -88,7 +93,7 @@ class AsyncModbusConnection:
 
                     await asyncio.sleep(delay)
 
-        return False  # sosem érjük el, csak linternek
+        return False  # should not be reached
 
     # --------------------------------------------------------------
     # RECONNECT (when the handler notices dropped connection)

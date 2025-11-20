@@ -4,7 +4,7 @@ from typing import Type, Generic, TypeVar
 
 import asyncio
 
-from sqlalchemy import select
+from sqlalchemy import select, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncEngine, AsyncSession
 
 import logging
@@ -47,6 +47,9 @@ class AsyncDBHandler(Generic[T]):
                 autocommit=False,
             )
             await self._init_db()
+
+            if self._logger:
+                self._logger.info("Database CONNECTION succesfull.")
         except Exception as e:
             self._logger.error(f"Failed to connect to DB: {e}")
             raise
@@ -54,10 +57,24 @@ class AsyncDBHandler(Generic[T]):
         if create_session:
             await self.create_session()
 
+
     async def _init_db(self):
         try:
-            async with self._engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
+            async with self._engine.connect() as conn:
+                # define a sync callable that utilizes inspec on sync connection
+                def get_tables(sync_conn):
+                    inspector = inspect(sync_conn)
+                    return inspector.get_table_names()
+
+                # run as sync in the async environment
+                existing_tables = await conn.run_sync(get_tables)
+
+            if not existing_tables:
+                async with self._engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                self._logger.info("Database schema created from scratch.")
+            else:
+                self._logger.info("Database schema already exists; skipped creation.")
         except Exception as e:
             self._logger.error(f"Failed to initialize DB schema: {e}")
             raise
@@ -177,7 +194,7 @@ class AsyncDBHandler(Generic[T]):
 
     # MANIPULATION
     async def add_sample(self, sample: T, session_id: Optional[int] = None) -> None:
-        if not sample.is_vaild:
+        if not sample.is_valid:
             self._logger.info(f"Invalid sample @{datetime.datetime.now(datetime.timezone.utc)}: Instrument timestamp = {sample.instrument_datetime}")
             return
 

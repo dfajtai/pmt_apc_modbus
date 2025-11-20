@@ -11,6 +11,7 @@ from services.async_db_handler import AsyncDBHandler
 from logic.apc_sample import APCSample
 from logic.apc_instrument import PmtApcInstrument
 
+from logic.apc_data_recorder import ApcDataRecorder, ApcRecordSession
 
 
 def sync_test():
@@ -41,7 +42,7 @@ async def async_init(config:AppConfig):
     await handler._get_client()
     return connection, handler
 
-async def async_test(sample_rate_hz: float = 1.0):
+async def async_test(sample_rate_hz: float = 1.0, print_last = False):
     config_handler = AppConfigHandler("../config.json")
     config = config_handler.initialize_defaults()
 
@@ -49,22 +50,26 @@ async def async_test(sample_rate_hz: float = 1.0):
     
 
     db_handler = AsyncDBHandler(sample_model= APCSample, config = config)
-    await db_handler.connect(create_session=True)
+    await db_handler.connect(create_session=False)
 
-    sessions = await db_handler.get_all_sessions()
-    for s in sessions:
-        print(str(s))
+    if print_last:
+        sessions = await db_handler.get_all_sessions()
+        for s in sessions:
+            print(str(s))
 
-    samples = await db_handler.get_all_samples()
-    for s in samples:
-        print(str(s))
-    await db_handler.close()
-    sys.exit()
+        last_session_id = await db_handler.get_last_session_id()
+
+        samples = await db_handler.get_samples_for_session(last_session_id)
+        for s in samples:
+            print(str(s))
+        await db_handler.close()
+        sys.exit()
 
     instrument = PmtApcInstrument(relay = handler)
     i = 0
 
     await instrument.async_start_sampling()
+    await db_handler.create_session()
     await db_handler.start_session()
     
     interval = 1.0 / sample_rate_hz
@@ -106,10 +111,19 @@ async def async_test(sample_rate_hz: float = 1.0):
     await db_handler.close()
     await connection.close()
 
-if __name__ == "__main__": 
+def simple_tests():
     is_async = True
 
     if not is_async:
         sync_test()
     else:
         asyncio.run(async_test())
+
+async def fancy_test():
+    recorder = ApcDataRecorder(True)
+    await recorder.initialize()
+    
+
+if __name__ == "__main__": 
+    # simple_tests()
+    asyncio.run(fancy_test())

@@ -2,28 +2,21 @@ from __future__ import annotations
 from typing import Union, Optional, Dict
 from pathlib import Path
 import json
+import logging
 
 from model.config_model import AppConfig
 
 
 class AppConfigHandler:
-    DEFAULTS: Dict[str, object] = {
-        "ip": "10.10.7.60",
-        "port": 1502,
-        "db_path": "./records.db",
-        "query_delay_ms": 1000,
-        "live_window_len": 120,
-        "moving_average_window_len": 5,
-        "flow": 28300.0,
-        "derived_metrics": False,
-        "log_enabled": False,
-        "allow_missing_path": True,
-    }
 
-    def __init__(self, config_path: Union[str, Path], auto_initialize_if_missing:bool = True):
+    def __init__(self, config_path: Union[str, Path],
+                 auto_initialize_if_missing:bool = True,
+                 logger: Optional[logging.Logger] = None):
+        
         self.config_path = Path(config_path)
         self.auto_initialize_if_missing = auto_initialize_if_missing
         self.config: Optional[AppConfig] = None
+        self.logger: Optional[logging.Logger] = logger
 
     # --- Core operations ---
 
@@ -38,8 +31,11 @@ class AppConfigHandler:
         else:
             with self.config_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-            merged = {**self.DEFAULTS, **data}
+            merged = {**AppConfig.DEFAULTS, **data}
             self.config = AppConfig.model_validate(merged)
+
+            if self.logger:
+                self.logger.info("Config successfully loaded.")
         return self.config
 
     def save_to_json(self) -> None:
@@ -53,7 +49,9 @@ class AppConfigHandler:
 
     def initialize_defaults(self) -> AppConfig:
         """Initialize configuration with default values."""
-        self.config = AppConfig.model_validate(self.DEFAULTS)
+        self.config = AppConfig.model_validate(AppConfig.DEFAULTS)
+        if self.logger:
+            self.logger.info("Config initialized form defaults.")
         return self.config
 
     def update_from_dict(self, updates: Dict[str, Union[str, int, float, bool]]):
@@ -77,7 +75,7 @@ class AppConfigHandler:
             return self.config
 
         updated_fields = {}
-        for key, default in self.DEFAULTS.items():
+        for key, default in AppConfig.DEFAULTS.items():
             if getattr(self.config, key, None) in (None, "", 0):
                 updated_fields[key] = default
 

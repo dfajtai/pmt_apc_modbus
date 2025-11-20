@@ -30,6 +30,6 @@ class BaseSample(Base, AsyncAttrs):
         return datetime.datetime.fromtimestamp(self.instrument_unix_timestamp, datetime.timezone.utc)
     
     @property
-    def is_vaild(self)->bool:
+    def is_valid(self)->bool:
         print()
         return abs(datetime.datetime.now(datetime.timezone.utc).timestamp() - self.instrument_unix_timestamp) < (24*3600.0)
