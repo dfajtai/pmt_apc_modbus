@@ -1,5 +1,8 @@
 from enum import Enum
 
+from typing import Optional
+import logging
+
 from dataclasses import dataclass
 import asyncio
 
@@ -33,7 +36,7 @@ class PmtApcInstrument:
         NORMAL = 0
         ABNORMAL = 1
         
-    def __init__(self, relay: ModbusHandler | AsyncModbusHandler):
+    def __init__(self, relay: ModbusHandler | AsyncModbusHandler, logger: Optional[logging.Logger] = None):
         if not (isinstance(relay,ModbusHandler) or isinstance(relay,AsyncModbusHandler)):
             raise ValueError
         self.relay = relay
@@ -41,6 +44,7 @@ class PmtApcInstrument:
         self.sampling_status = None
         self.device_status = None
         self.flow_rate = None
+        self.logger: Optional[logging.Logger] = logger
     
 
     # ****************** SYNC ****************** 
@@ -104,8 +108,15 @@ class PmtApcInstrument:
     # control
 
     async def async_start_sampling(self):
+        if self.logger:
+            self.logger.debug("Sampling status over MODBUS ....")
+
         control_query = ModbusQuery("control_sampling",2,1,writeable=True)
+        
         await self.relay.write_coil(control_query,True)
+
+        if self.logger:
+            self.logger.debug("Sampling status over MODBUS modified")
 
     async def async_stop_sampling(self):
         control_query = ModbusQuery("control_sampling",2,1,writeable=True)

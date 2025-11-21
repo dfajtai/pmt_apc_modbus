@@ -1,4 +1,4 @@
-from typing import Union, Optional, Dict, Callable, Deque
+from typing import Union, Optional, Dict, Callable, Deque, List
 from collections import deque
 from dataclasses import dataclass, field
 import logging
@@ -39,7 +39,12 @@ class ApcRecordSession():
         for channel in PmtApcInstrument.CHANNELS:
             self.live_data[channel.channel_name] = deque(self.deque_len)
             self.accumulator[channel.channel_name] = 0
-        
+    
+    @staticmethod
+    def form_db(sample_list:List[APCSample]):
+        raise NotImplementedError()
+        pass
+
     def add_sample(self, sample:APCSample):
         if not sample.is_valid():
             return False
@@ -55,6 +60,31 @@ class ApcRecordSession():
         self.num_of_samples +=1
 
         return True
+    
+    def end_session(self):
+        self.session_end = time.monotonic()
+
+    # -------------------------
+    # Helper functions
+    # -------------------------
+    @property
+    def total_volume(self)->Union[float,None]:
+        raise NotImplementedError()
+
+    # -------------------------
+    # Statistics functions
+    # -------------------------
+
+    def on_flight_staistics(self):
+
+        # sliding window average...
+
+        pass
+
+    def session_statistics(self):
+
+        pass
+    
 
 
 class ApcDataRecorder():
@@ -65,7 +95,7 @@ class ApcDataRecorder():
       - Async DB (AsyncDBHandler)
     Features:
       - initialize() to prepare resources
-      - async start_recording(sample_rate_hz)
+      - async start_recording()
       - async stop_recording()
       - start_in_thread()/stop_thread() to run in background thread (GUI-friendly)
       - watchdog monitoring
@@ -86,7 +116,7 @@ class ApcDataRecorder():
 
         # logger
         self.logger = logging.getLogger("ApcDataRecorder")
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
 
         # callbacks (e.g. GUI)
         self.callback_handler = CallbackLoggingHandler()
@@ -182,7 +212,7 @@ class ApcDataRecorder():
                 self.logger.error("Cannot initialize instrument: modbus handler missing")
                 return False
             try:
-                self.instrument = PmtApcInstrument(relay=self.modbus_handler)
+                self.instrument = PmtApcInstrument(relay=self.modbus_handler, logger= self.logger)
             except Exception as e:
                 self.logger.error("Error during initializing instrument.")
                 self.logger.exception(e)
@@ -289,12 +319,13 @@ class ApcDataRecorder():
             self.logger.error("Cannot start sampling: recorder not initialized.")
             return False
 
-        interval = self.config.query_delay_ms / 1000.0  # ms → sec
+        interval = self.config.sampling_step / 1000.0  # ms → sec
         self._async_stop = asyncio.Event()
         self._started = False
 
         # start DB session + instrument
         try:
+            start_success = await self.instrument.async_start_sampling()
             current_session_id = await self.db_handler.create_session()
             flow = await self.instrument.async_read_flow()
             self.record_session = ApcRecordSession(
@@ -302,6 +333,8 @@ class ApcDataRecorder():
                 flow=flow / 1000.0,
                 deque_len=self.config.live_window_len
             )
+            
+
         except Exception as e:
             self.logger.error("Failed to initialize sampling session")
             self.logger.exception(e)
@@ -317,7 +350,7 @@ class ApcDataRecorder():
                 if self._started: 
                     # there is an error, or sync problem... -> initiate stop.
                     self.logger.critical("Abnormal Sampling Status detected.")
-                    self.manual_stop_sampling()
+                    await self.manual_stop_sampling()
                     continue
                 else:
                     if status != self.instrument.SamplingStatus.SAMPLING:
@@ -371,6 +404,8 @@ class ApcDataRecorder():
 
         try:
             await self.db_handler.end_session()
+            await self.record_session.end_session()
+            
         except Exception as e:
             self.logger.error("Failed to end DB session")
             self.logger.exception(e)
@@ -455,8 +490,15 @@ class ApcDataRecorder():
         self._async_stop = asyncio.Event()
 
         # spawn tasks
-        self._sampling_task = asyncio.create_task(self._sampling_loop())
-        self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+        self._sampling_task = asyncio.create_task(self._sampling_loop()) # <- ORIGINAL, NOT WORKING
+
+        # loop = asyncio.get_running_loop()
+        # self._sampling_task = loop.create_task(self._sampling_loop()) <- NOT WORKING EITHER
+
+        # self._sampling_task = await self._sampling_loop() <- WORKING, BUT NOT WHAT I WANT
+
+
+        # self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
         self.logger.info("Recording started.")
         return True
@@ -538,7 +580,7 @@ class ApcDataRecorder():
                 pass
             self.logger.info("Background thread exiting.")
 
-    def start_in_thread(self, sample_rate_hz: float = 1.0, wait_for_start: bool = True):
+    def start_in_thread(self,  wait_for_start: bool = True):
         """
         Start the recorder in a background daemon thread. Useful for GUI apps.
         """
@@ -550,7 +592,7 @@ class ApcDataRecorder():
         self._stop_event.clear()
         self._thread_started.clear()
 
-        self._thread = threading.Thread(target=self._thread_main, args=(sample_rate_hz,), daemon=True)
+        self._thread = threading.Thread(target=self._thread_main, args=(), daemon=True)
         self._thread.start()
 
         if wait_for_start:
@@ -618,5 +660,7 @@ class ApcDataRecorder():
             return False
         
         self.instrument_initialized = False
+
+
 
         return True

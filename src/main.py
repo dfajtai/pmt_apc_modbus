@@ -122,8 +122,18 @@ def simple_tests():
 async def fancy_test():
     recorder = ApcDataRecorder(True)
     await recorder.initialize()
-    
+
+    # await recorder.db_handler.create_session()
+
+    await recorder.start_recording()
+
+    # recorder.start_in_thread()
+
 
 if __name__ == "__main__": 
     # simple_tests()
+
     asyncio.run(fancy_test())
+
+    # recorder = ApcDataRecorder(True)
+    # recorder.start_in_thread()
