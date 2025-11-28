@@ -2,13 +2,18 @@ import asyncio
 import logging
 import datetime
 import time
-import random
+
+import sys
+
 from typing import Optional, Any, Dict
 
 from sqlalchemy import Integer, Column, DateTime, text
+
+from sqlalchemy import func
+
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncEngine, AsyncSession
-from sqlalchemy.pool import StaticPool
 
 import threading
 
@@ -17,155 +22,178 @@ Base = declarative_base()
 class S(Base):
     __tablename__ = "test_table"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    start = Column(DateTime, nullable=True)
     timestamp: Mapped[datetime.datetime] = mapped_column(
         DateTime,
         index=True,
         default=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
 
-class SampleWriter:
-    def __init__(
-        self,
-        logger: logging.Logger,
-        db_url: str = "sqlite+aiosqlite:///test_db.db",
-        loop: Optional[asyncio.AbstractEventLoop] = None,
-        queue_maxsize: int = 1000,
-    ):
+
+class QueuedWriter():
+    def __init__(self, logger:logging.Logger = None):
         self.logger = logger
-        self.db_url = db_url
-        self.loop = loop or asyncio.get_event_loop()
-        self.queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=queue_maxsize)
-        self._stop_event = asyncio.Event()
-        self._consumer_task: Optional[asyncio.Task] = None
-        self.engine: Optional[AsyncEngine] = None
-        self.Session: Optional[async_sessionmaker[AsyncSession]] = None
+        
+        self._stop = asyncio.Event()
+        self._main_loop_task: Optional[asyncio.Task] = None 
+        
+        self.engine = None
+        self.SessionLocal: Optional[async_sessionmaker[AsyncSession]] = None 
+        
+        self.queue = asyncio.Queue()
+        self.lock = asyncio.Lock()
+        self._worker_task: Optional[asyncio.Task] = None 
 
-    async def start(self) -> None:
-        self.logger.debug("[SampleWriter] Creating async engine")
-        self.engine = create_async_engine(
-            self.db_url,
-            echo=False,
-            connect_args={"check_same_thread": False, "timeout": 30},
-            poolclass=StaticPool,
-        )
-        async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
-        self._consumer_task = self.loop.create_task(self._consumer())
-        self.logger.debug("[SampleWriter] Started consumer task")
+    async def _submit_job(self, coro):
+        future = asyncio.Future()
+        async def wrapped_job():
+            try:
+                result = await coro()
+                future.set_result(result)
+            except Exception as e:
+                future.set_exception(e)
+            finally:
+                self.queue.task_done()
+        
+        await self.queue.put(wrapped_job)
+        return future
+    
+        
+    async def _worker(self):
+        while True:
+            try:
+                job = await asyncio.wait_for(self.queue.get(), timeout=1)
+            except asyncio.TimeoutError:
+                continue
+            
+            if job is None:
+                self.queue.task_done() 
+                break
+            
+            async with self.lock:
+                await job()
 
-    async def stop(self) -> None:
-        self.logger.debug("[SampleWriter] Stopping")
-        self._stop_event.set()
-        await self.queue.put({"type": "stop"})
-        if self._consumer_task is not None:
-            await self._consumer_task
-        if self.engine is not None:
+        return True
+
+    
+    async def initialize_db(self) -> bool:
+        async with self.lock:
+            url = "sqlite+aiosqlite:///test_db.db"
+
+            self.logger.debug(f"Creating async engine")
+            self.engine = create_async_engine(
+                url,
+                echo=False,               # SQL log
+            )
+            
+            self.SessionLocal = async_sessionmaker(
+                bind=self.engine, 
+                expire_on_commit=False,
+                class_=AsyncSession # Explicit megadás, bár alapértelmezett
+            )
+
+            self.logger.debug(f"Async engine created")
+            self.logger.debug(f"Connecting, initializing")
+
+            async with self.engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
+            self.logger.debug(f"DB Initialized")
+        
+   
+    
+    
+    async def add_sample(self) -> bool:
+        async with self.SessionLocal() as sess: 
+            obj = S()
+            sess.add(obj)
+            self.logger.debug(f"Before commit")
+            await sess.commit()
+            self.logger.debug(f"After commit")
+            await sess.refresh(obj)
+            self.logger.debug(f"Object refreshed")
+        return True
+        
+    
+    async def get_num_of_samples(self) -> int:
+        async with self.lock:
+            async with self.SessionLocal() as sess: 
+                q = select(func.count()).select_from(S)
+                result = await sess.execute(q)
+                print(result.scalar())
+            return True
+        
+    async def _main_loop(self):
+        start = time.monotonic()
+        next_time = start
+        
+        while not self._stop.is_set():
+            next_time = next_time + 1.0
+            await self._submit_job(self.add_sample)
+            
+            delay = next_time - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            await self.get_num_of_samples()
+    
+    
+    async def start(self):
+        self._worker_task = asyncio.create_task(self._worker())
+        self._main_loop_task = asyncio.create_task(self._main_loop())
+    
+       
+    async def stop(self):
+        self.logger.info("Stopping QueuedWriter...")
+        
+        # 1. Jelezd a main_loopnak, hogy ne generáljon több feladatot
+        self._stop.set()
+        
+        # 2. Várd meg, amíg a main_loop befejezi a jelenlegi ciklust és leáll
+        await self._main_loop_task
+        self.logger.info("Main loop stopped.")
+
+        # 3. Várjuk meg, amíg a queue-ban lévő ÖSSZES feladat feldolgozásra kerül
+        await self.queue.join()
+        self.logger.info("All queue tasks processed.")
+
+        # 4. Küldd el a None jelet a workernek, hogy a ciklusa befejeződjön
+        await self.queue.put(None)
+        
+        # 5. Várd meg a worker task tényleges befejezését
+        await self._worker_task
+        self.logger.info("Worker task stopped.")
+        
+        await self.get_num_of_samples()
+        
+        # 6. Zárd be az engine-t
+        if self.engine:
             await self.engine.dispose()
-        self.logger.debug("[SampleWriter] Stopped and engine disposed")
+            self.logger.info("DB engine disposed.")
+        
+        self.logger.info("QueuedWriter successfully stopped.")
+        
 
-    async def _consumer(self) -> None:
-        assert self.Session is not None, "Session not initialized"
-        self.logger.debug("[SampleWriter] Consumer loop started")
-        try:
-            while True:
-                item = await self.queue.get()
-                try:
-                    if item.get("type") == "stop":
-                        self.logger.debug("[SampleWriter] Stop item received")
-                        break
-                    async with self.Session() as session:
-                        obj = S()
-                        start_value = item.get("start")
-                        if start_value is not None:
-                            obj.start = start_value
-                        session.add(obj)
-                        self.logger.debug("[SampleWriter] Before commit")
-                        await session.commit()
-                        self.logger.debug("[SampleWriter] After commit")
-                except Exception as e:
-                    self.logger.error(f"[SampleWriter] Error writing sample: {e}")
-                finally:
-                    self.queue.task_done()
-        finally:
-            self.logger.debug("[SampleWriter] Consumer loop finished")
-
-    def add_sample(self, start: Optional[datetime.datetime] = None) -> None:
-        if self.loop.is_closed():
-            raise RuntimeError("Event loop is closed")
-        item = {"type": "sample", "start": start}
-        fut = asyncio.run_coroutine_threadsafe(self.queue.put(item), self.loop)
-        fut.result()
-
-async def squlite_task(logger: logging.Logger, event: asyncio.Event, task: str = "", writer: SampleWriter = None):
-    logger.debug(f"[T{task}] Producer started")
-    start = time.monotonic()
-    next_time = start
-    while not event.is_set():
-        next_time = next_time + 1.0
-        writer.add_sample(start=datetime.datetime.now(datetime.timezone.utc))
-        delay = next_time - time.monotonic()
-        if delay > 0:
-            await asyncio.sleep(delay)
-    logger.debug(f"[T{task}] Producer stopped")
-
-async def dummy_interrupt_task(logger: logging.Logger, event: asyncio.Event, task: str = ""):
-    i = 0
-    while True:
-        rnd = random.random()
-        if rnd > 0.995:
-            logger.debug(f"[T{task}] Dummy interrupt initiated in {i} steps.")
-            event.set()
-            break
-        if event.is_set():
-            break
-        await asyncio.sleep(.1)
-    return True
-
-async def create_run_tasks(logger: logging.Logger, event: asyncio.Event):
-    logger.debug("Creating task")
-    writer = SampleWriter(logger=logger)
-    await writer.start()
-    t1 = asyncio.create_task(squlite_task(logger=logger, task="1", event=event, writer=writer))
-    t2 = asyncio.create_task(dummy_interrupt_task(logger=logger, task="2", event=event))
-    await asyncio.gather(t1, t2)
+async def test_writer(writer:QueuedWriter):
+    await writer.initialize_db()
+    
+    _task = asyncio.create_task(writer.start())
+    
+    await asyncio.sleep(5.0)
+    
     await writer.stop()
-    logger.debug("Task done")
-    return True
+    await _task
 
-def _thread_with_interrupt(logger: logging.Logger, event: asyncio.Event):
-    try:
-        logger.debug("Thread based approach ...")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(create_run_tasks(logger=logger, event=event))
-    except Exception as e:
-        logger.error(e)
-        raise Exception from e
-
-def run_test_on_thread_with_internal_interrupt(logger: logging.Logger):
-    stop_event = asyncio.Event()
-    start = time.monotonic()
-    thread = threading.Thread(target=_thread_with_interrupt, args=(logger, stop_event), daemon=False)
-    logger.debug("Starting thread")
-    thread.start()
-    logger.debug("Thread started")
-    while True:
-        time.sleep(1)
-        if (time.monotonic() - start > 20) or stop_event.is_set():
-            break
-    stop_event.set()
-    thread.join()
-    logger.debug("Thread finished")
 
 if __name__ == "__main__":
     logger = logging.getLogger("asyncio")
     logger.setLevel(logging.DEBUG)
+    
     if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-        console_handler = logging.StreamHandler()
+        console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
-    run_test_on_thread_with_internal_interrupt(logger)
+        
+    writer = QueuedWriter(logger=logger)
+    
+    asyncio.run(test_writer(writer=writer))
