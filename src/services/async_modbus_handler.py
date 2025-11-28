@@ -15,35 +15,66 @@ class AsyncModbusHandler:
     def __init__(self, connection: AsyncModbusConnection,
                  logger: Optional[logging.Logger] = None,
                  test_address: int = 1):
+
         if not isinstance(connection, AsyncModbusConnection):
             raise TypeError("AsyncModbusHandler requires a AsyncModbusConnection instance.")
-        self.connection = connection
 
+        self.connection = connection
         self.logger = logger
         self.test_address = test_address
 
         self._queue = asyncio.Queue()
-        self._worker_task = asyncio.create_task(self._worker())
+        self._worker_task = None
 
+    # -------------------------------------------------------
+    # Worker indítása mindig az aktuális event loopon
+    # -------------------------------------------------------
+    def _ensure_worker(self):
+        if self._worker_task and not self._worker_task.done():
+            return
+
+        loop = asyncio.get_running_loop()
+        self._worker_task = loop.create_task(self._worker())
+
+        if self.logger:
+            self.logger.debug("Worker task started")
+
+    # -------------------------------------------------------
+    # Worker loop
+    # -------------------------------------------------------
     async def _worker(self):
         while True:
             item = await self._queue.get()
             try:
                 query, coro_func, future = item
                 result = await coro_func(query)
-                future.set_result(result)
+                if not future.done():
+                    future.set_result(result)
+
             except Exception as e:
-                future.set_exception(e)
-            self._queue.task_done()
+                if not future.done():
+                    future.set_exception(e)
 
-    async def enqueue_request(self, query: ModbusQuery, coro_func):
-        loop = asyncio.get_event_loop()
-        future = loop.create_future()
+            finally:
+                self._queue.task_done()
+
+    # -------------------------------------------------------
+    # Enqueue standardized request
+    # -------------------------------------------------------
+    async def enqueue_request(self, query, coro_func):
+        self._ensure_worker()
+
+        future = asyncio.get_running_loop().create_future()
+
+        self.logger.debug("MODBUS query qued.")
+
         await self._queue.put((query, coro_func, future))
-        return await future
-    # -------- helper --------
 
-      # -------- helper --------
+        self.logger.debug("MODBUS query done.")
+
+        return await future
+
+    # -------- helper --------
 
     async def _get_client(self):
         if not self.connection.is_connected:
@@ -51,27 +82,28 @@ class AsyncModbusHandler:
         return self.connection.client
 
     async def check_connection(self) -> bool:
-        
+
         async def _check_impl(_):
             if not self.connection.is_connected:
                 return False
+
             client = await self._get_client()
             if client is None:
                 return False
+
             try:
-                result = await client.read_coils(self.test_address, count=1)
+                await client.read_coils(self.test_address, count=1)
                 return True
             except Exception as e:
                 if self.logger:
                     self.logger.error(e)
                 return False
 
-
         return await self.enqueue_request(None, _check_impl)
+
     # --------------------------------------------------------------------------
     # ASYNC READS
     # --------------------------------------------------------------------------
-
     async def read_input(self, query: ModbusQuery):
         return await self.enqueue_request(query, self._read_input_impl)
 
@@ -83,8 +115,6 @@ class AsyncModbusHandler:
                 count=query.length,
             )
             if result.isError():
-                if self.logger:
-                    self.logger.error(f"Error reading input register at {query.register}")
                 raise ModbusException(f"Error reading input register at {query.register}")
             return query.parse_value_from_registers(result.registers)
         except Exception as e:
@@ -101,8 +131,6 @@ class AsyncModbusHandler:
                 count=query.length,
             )
             if result.isError():
-                if self.logger:
-                    self.logger.error(f"Error reading holding register at {query.register}")
                 raise ModbusException(f"Error reading holding register at {query.register}")
             return query.parse_value_from_registers(result.registers)
         except Exception as e:
@@ -116,8 +144,6 @@ class AsyncModbusHandler:
         try:
             result = await client.read_coils(query.register, count=1)
             if result.isError():
-                if self.logger:
-                    self.logger.error(f"Error reading coil at {query.register}")
                 raise ModbusException(f"Error reading coil at {query.register}")
             return bool(result.bits[0])
         except Exception as e:
@@ -126,57 +152,50 @@ class AsyncModbusHandler:
     # --------------------------------------------------------------------------
     # ASYNC WRITES
     # --------------------------------------------------------------------------
-
     async def write_register(self, query: ModbusQuery, value: int):
-        return await self.enqueue_request((query, value), self._write_register_impl)
+        return await self.enqueue_request(
+            (query, value),
+            self._write_register_impl
+        )
 
     async def _write_register_impl(self, args):
         query, value = args
         client = await self._get_client()
         try:
-            result = await client.write_register(
-                address=query.register,
-                value=value,
-            )
+            result = await client.write_register(address=query.register, value=value)
             if result.isError():
-                if self.logger:
-                    self.logger.error(f"Error writing register at {query.register}")
                 raise ModbusException(f"Error writing register at {query.register}")
         except Exception as e:
             raise ModbusException(f"Failed to write register {query.register}: {e}") from e
 
     async def write_registers(self, query: ModbusQuery, values: list[int]):
-        return await self.enqueue_request((query, values), self._write_registers_impl)
+        return await self.enqueue_request(
+            (query, values),
+            self._write_registers_impl
+        )
 
     async def _write_registers_impl(self, args):
         query, values = args
         client = await self._get_client()
         try:
-            result = await client.write_registers(
-                address=query.register,
-                values=values,
-            )
+            result = await client.write_registers(address=query.register, values=values)
             if result.isError():
-                if self.logger:
-                    self.logger.error(f"Error writing registers at {query.register}")
                 raise ModbusException(f"Error writing registers at {query.register}")
         except Exception as e:
             raise ModbusException(f"Failed to write registers {query.register}: {e}") from e
 
     async def write_coil(self, query: ModbusQuery, value: bool):
-        return await self.enqueue_request((query, value), self._write_coil_impl)
+        return await self.enqueue_request(
+            (query, value),
+            self._write_coil_impl
+        )
 
     async def _write_coil_impl(self, args):
         query, value = args
         client = await self._get_client()
         try:
-            result = await client.write_coil(
-                address=query.register,
-                value=bool(value),
-            )
+            result = await client.write_coil(address=query.register, value=bool(value))
             if result.isError():
-                if self.logger:
-                    self.logger.error(f"Error writing coil at {query.register}")
                 raise ModbusException(f"Error writing coil at {query.register}")
         except Exception as e:
             raise ModbusException(f"Failed to write coil {query.register}: {e}") from e

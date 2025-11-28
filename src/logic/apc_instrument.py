@@ -109,7 +109,7 @@ class PmtApcInstrument:
 
     async def async_start_sampling(self):
         if self.logger:
-            self.logger.debug("Sampling status over MODBUS ....")
+            self.logger.debug("Starting sampling over MODBUS ....")
 
         control_query = ModbusQuery("control_sampling",2,1,writeable=True)
         

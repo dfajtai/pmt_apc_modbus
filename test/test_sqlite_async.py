@@ -17,7 +17,7 @@ import threading
 Base = declarative_base()
 
 class S(Base):
-    __tablename__ = "sessions"
+    __tablename__ = "test_table"
     id = Column(Integer, primary_key=True, autoincrement=True)
     start = Column(DateTime, nullable=True)
     timestamp: Mapped[datetime.datetime] = mapped_column(
@@ -180,7 +180,7 @@ async def dummy_interrupt(logger:logging.Logger, event:asyncio.Event, task:str =
     while True:
         rnd = random.random()
         i+=1
-        if  rnd > 0.99:
+        if  rnd > 0.995:
             logger.debug(f"[T{task}]Dummy interrup initiated in {i} steps.")
             event.set()
             break

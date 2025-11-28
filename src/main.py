@@ -119,21 +119,24 @@ def simple_tests():
     else:
         asyncio.run(async_test())
 
-async def fancy_test():
+async def initialize_recorder():
     recorder = ApcDataRecorder(True)
     await recorder.initialize()
 
-    # await recorder.db_handler.create_session()
+    return recorder
 
-    await recorder.start_recording()
 
-    # recorder.start_in_thread()
+
+def thread_test():
+    recorder = asyncio.run(initialize_recorder())
+    assert isinstance(recorder,ApcDataRecorder)
+    recorder.start_in_thread()
+    recorder.thread_obj.join()
+
 
 
 if __name__ == "__main__": 
     # simple_tests()
 
-    asyncio.run(fancy_test())
+    thread_test()
 
-    # recorder = ApcDataRecorder(True)
-    # recorder.start_in_thread()

@@ -106,6 +106,7 @@ class ApcDataRecorder():
     def __init__(self, file_logger: bool = True):
         # event loop / thread related
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
         self._thread: Optional[threading.Thread] = None
         self._thread_started = threading.Event()
 
@@ -248,6 +249,9 @@ class ApcDataRecorder():
             self.instrument_initialized
         ])
 
+    @property
+    def thread_obj(self):
+        return self._thread
 
     # -------------------------
     # Logging callbacks
@@ -321,11 +325,27 @@ class ApcDataRecorder():
 
         interval = self.config.sampling_step / 1000.0  # ms → sec
         self._async_stop = asyncio.Event()
-        self._started = False
+        self._sampling_started = False
 
         # start DB session + instrument
         try:
-            start_success = await self.instrument.async_start_sampling()
+            start_trials = 0
+            while True:
+                try:
+                    start_success = await self.instrument.async_start_sampling()
+                    if start_success:
+                        break
+                    if start_trials>4:
+                        break
+                    start_trials+=1
+                    await asyncio.sleep(.5)
+
+                except Exception as e:
+                    continue 
+            if not start_success:
+                self.logger.error("Unable to start sampling")
+                self._async_stop.set()
+                
             current_session_id = await self.db_handler.create_session()
             flow = await self.instrument.async_read_flow()
             self.record_session = ApcRecordSession(
@@ -347,7 +367,7 @@ class ApcDataRecorder():
         while not self._async_stop.is_set():
             try:
                 status = await self.instrument.async_read_sampling_status()
-                if self._started: 
+                if self._sampling_started: 
                     # there is an error, or sync problem... -> initiate stop.
                     self.logger.critical("Abnormal Sampling Status detected.")
                     await self.manual_stop_sampling()
@@ -363,11 +383,11 @@ class ApcDataRecorder():
                 success = self.record_session.add_sample(sample)
 
                 if success:
-                    if not self._started:
+                    if not self._sampling_started:
                         # Start session at first valid sample
                         await self.db_handler.start_session()
                         start_time = time.monotonic()
-                        self._started = True
+                        self._sampling_started = True
                         self.logger.info(f"Sampling session started (ID={self.record_session.session_id})")
 
                     await self.db_handler.add_sample(sample, session_id=self.record_session.session_id)
@@ -384,7 +404,7 @@ class ApcDataRecorder():
                     self.logger.warning(f"Sampling drift ({-sleep_time:.3f}s behind schedule)")
 
                 # Time limit
-                if self._started and (time.monotonic() - start_time >= self.config.sampling_time):
+                if self._sampling_started and (time.monotonic() - start_time >= self.config.sampling_time):
                     break
 
             except asyncio.CancelledError:
@@ -411,7 +431,7 @@ class ApcDataRecorder():
             self.logger.exception(e)
 
         self.logger.info(f"Sampling session ended (ID={self.record_session.session_id})")
-        self._started = False
+        self._sampling_started = False
 
 
     async def _watchdog_loop(self):
@@ -490,15 +510,10 @@ class ApcDataRecorder():
         self._async_stop = asyncio.Event()
 
         # spawn tasks
-        self._sampling_task = asyncio.create_task(self._sampling_loop()) # <- ORIGINAL, NOT WORKING
+        self._sampling_task = asyncio.create_task(self._sampling_loop())
+        self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
-        # loop = asyncio.get_running_loop()
-        # self._sampling_task = loop.create_task(self._sampling_loop()) <- NOT WORKING EITHER
-
-        # self._sampling_task = await self._sampling_loop() <- WORKING, BUT NOT WHAT I WANT
-
-
-        # self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+        asyncio.gather(self._sampling_task,self._watchdog_task)
 
         self.logger.info("Recording started.")
         return True
@@ -580,19 +595,31 @@ class ApcDataRecorder():
                 pass
             self.logger.info("Background thread exiting.")
 
-    def start_in_thread(self,  wait_for_start: bool = True):
+    def init_thread(self)->threading.Thread:
+        if self._thread and self._thread.is_alive():
+            return self.thread_obj
+        
+        self._thread_started.clear()
+
+        self._thread = threading.Thread(target=self._thread_main, args=(), daemon=True)
+        return self.thread_obj
+
+
+
+    def start_in_thread(self, thread:Optional[threading.Thread] = None, wait_for_start: bool = True):
         """
         Start the recorder in a background daemon thread. Useful for GUI apps.
         """
+
         if self._thread and self._thread.is_alive():
             raise ApcDataRecorderException("Recorder thread already running")
 
         # ensure config is loaded and components are available on the thread
         # thread will call initialize() itself
         self._stop_event.clear()
-        self._thread_started.clear()
+        
+        self.init_thread()
 
-        self._thread = threading.Thread(target=self._thread_main, args=(), daemon=True)
         self._thread.start()
 
         if wait_for_start:
@@ -603,6 +630,7 @@ class ApcDataRecorder():
 
         self.logger.info("Recorder background thread started.")
         return True
+    
 
     def stop_thread(self, wait_for_join: float = 5.0):
         """
