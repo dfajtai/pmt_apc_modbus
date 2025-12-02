@@ -170,6 +170,23 @@ class AsyncDBHandler(Generic[T]):
                     self._logger.info("Database schema exists; skipped creation.")
                 
 
+    async def check_connection(self) -> bool:
+        """Check DB connection immediately, without using the queued worker."""
+        if not self._is_db_connected:
+            return self._is_db_connected
+
+        if not self._engine:
+            self._logger.error("DB Check connection failed: no engine")
+            return False
+        try:
+            # the connect() context manager return a RAW session, capable to run SELECT 1 for connection validation
+            async with self._engine.connect() as conn:
+                await conn.execute("SELECT 1")
+            return True
+        except Exception as e:
+            self._logger.error(f"DB connection check failed: {e}")
+            return False
+
     # CONTROL
 
     async def start(self):
@@ -213,6 +230,8 @@ class AsyncDBHandler(Generic[T]):
 
                     await session.commit()
 
+                    self._sampling_session_id = new_session.id
+
                     return new_session.id
 
         return await self._submit_job(_create_sampling_session_impl)
@@ -245,6 +264,9 @@ class AsyncDBHandler(Generic[T]):
     async def end_sampling_session(self, session_id: Optional[int]= None, end_time: Optional[datetime.datetime] = None)->bool:
         if session_id is None:
             session_id = self.session_id
+
+        if not self._sampling_session_running:
+            return True
 
         async def _end_sampling_session_impl(session_id:int, end_time:Optional[datetime.datetime])->bool:
             async with self._lock:
