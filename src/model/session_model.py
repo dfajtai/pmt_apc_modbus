@@ -7,7 +7,7 @@ import datetime
 from model.database_model import Base
 
 
-class SessionTable(Base, AsyncAttrs):
+class SamplingSession(Base, AsyncAttrs):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

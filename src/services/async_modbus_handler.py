@@ -43,6 +43,7 @@ class AsyncModbusHandler:
         self,
         connection: AsyncModbusConnection,
         logger: Optional[logging.Logger] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
         test_address: int = 1
     ) -> None:
         """
@@ -70,6 +71,9 @@ class AsyncModbusHandler:
         self._lock = asyncio.Lock()
         self._queue: asyncio.Queue[Optional[QueueItem]] = asyncio.Queue()
         self._worker_task: Optional[asyncio.Task] = None
+
+        # --- THREAD-SAFE EVENT LOOP ---
+        self._loop = loop
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -101,16 +105,17 @@ class AsyncModbusHandler:
         if self._worker_task is None:
             return
 
-        # Wait until current jobs complete
-        await self._queue.join()
-
         # Send sentinel for shutdown
         await self._queue.put(None)
 
-        # Wait for the worker to exit
-        await self._worker_task
-        self._worker_task = None
+        # Wait until current jobs complete
+        await self._queue.join()
 
+        # Wait for the worker to exit
+        if self._worker_task:
+            await self._worker_task
+            self._worker_task = None
+            
         # Close the underlying connection
         await self.connection.close()
         self.logger.info("AsyncModbusHandler stopped.")
@@ -148,7 +153,13 @@ class AsyncModbusHandler:
                 "Worker is not running. Call start() before submitting jobs."
             )
 
-        future: asyncio.Future = asyncio.Future()
+        # future: asyncio.Future = asyncio.Future()
+
+        if self._loop is not None:
+            future = self._loop.create_future()
+        else:
+            future = asyncio.get_running_loop().create_future()
+
         await self._queue.put((coro_func, args, future))
         return await future
 
@@ -165,7 +176,7 @@ class AsyncModbusHandler:
         - Stores the result or exception in the provided Future
         - Handles shutdown upon receiving a None sentinel
         """
-        self.logger.debug("Worker task started.")
+        self.logger.debug("MODBUS Worker task started.")
 
         while True:
             item = await self._queue.get()
@@ -187,7 +198,7 @@ class AsyncModbusHandler:
             finally:
                 self._queue.task_done()
 
-        self.logger.debug("Worker task finished.")
+        self.logger.debug("MODBUS Worker task finished.")
 
     # ------------------------------------------------------------------ #
     # Helper
