@@ -5,7 +5,8 @@ import logging
 import asyncio
 import threading
 import time
-import traceback
+import datetime
+
 
 from services.logging_callback import CallbackLoggingHandler
 
@@ -37,7 +38,7 @@ class ApcRecordSession():
 
     def __post_init__(self):
         for channel in PmtApcInstrument.CHANNELS:
-            self.live_data[channel.channel_name] = deque(self.deque_len)
+            self.live_data[channel.channel_name] = deque(maxlen=self.deque_len)
             self.accumulator[channel.channel_name] = 0
     
     @staticmethod
@@ -184,6 +185,9 @@ class ApcDataRecorder():
             try:
                 self.modbus_handler = AsyncModbusHandler(connection=self.modbus_connection, logger=self.logger, test_address= 30164)
                 # public check that DOES NOT reconnect
+
+                await self.modbus_handler.start()
+
                 ok = await self.modbus_handler.check_connection()
                 if not ok:
                     raise ModbusException("Initial modbus health-check failed")
@@ -192,6 +196,8 @@ class ApcDataRecorder():
                 self.logger.exception(e)
                 return False
 
+            
+
         self.modbus_initialized = True
         return True
 
@@ -199,7 +205,10 @@ class ApcDataRecorder():
         if not self.db_initialized:
             try:
                 self.db_handler = AsyncDBHandler(sample_model=APCSample, config=self.config, logger=self.logger)
-                await self.db_handler.connect(create_session=False)
+                await self.db_handler.start()
+                # await self.db_handler.connect()
+                # await self.db_handler.initialize_db()
+
             except Exception as e:
                 self.logger.error("Error during connecting to the database.")
                 self.logger.exception(e)
@@ -230,7 +239,7 @@ class ApcDataRecorder():
 
         if not await self._initialize_modbus():
             return False
-
+                
         if not await self._initialize_db():
             return False
 
@@ -296,6 +305,11 @@ class ApcDataRecorder():
             if status != self.instrument.DeviceStatus.NORMAL:
                 self.logger.critical("Instrument status is abnormal!")
                 return False
+            
+            current_sampling_status = await self.instrument.async_read_sampling_status()
+            if current_sampling_status != self.instrument.sampling_status:
+                self.logger.critical("Instrument SAMPLING STATUS is falsely registrated.")
+                return False
 
             # db connection check
             if self.db_handler is None:
@@ -327,111 +341,180 @@ class ApcDataRecorder():
         self._async_stop = asyncio.Event()
         self._sampling_started = False
 
-        # start DB session + instrument
+        # prepare sampling: try to start instrument and create new DB session
         try:
             start_trials = 0
+            start_success = False
             while True:
                 try:
                     start_success = await self.instrument.async_start_sampling()
                     if start_success:
                         break
-                    if start_trials>4:
+                    if start_trials > 4:
                         break
-                    start_trials+=1
-                    await asyncio.sleep(.5)
+                    start_trials += 1
+                    await asyncio.sleep(1.0)
+                except Exception:
+                    # swallow, try again
+                    start_trials += 1
+                    await asyncio.sleep(0.2)
 
-                except Exception as e:
-                    continue 
             if not start_success:
                 self.logger.error("Unable to start sampling")
                 self._async_stop.set()
-                
-            current_session_id = await self.db_handler.create_session()
+                return False
+
+            # ensure last session closed (optional – if you want to force-close previous)
+            try:
+                await self.db_handler.end_sampling_session()
+            except Exception:
+                # ignore if there was no previous session; just log
+                self.logger.debug("No previous DB session to end or error ending it (ignored).")
+
+            # create new session and local record session
+            current_session_id = await self.db_handler.create_sampling_session()
+            # IMPORTANT: make sure DB handler knows current session id or use explicit ids later
+            # e.g. await self.db_handler.set_current_session_id(current_session_id)
             flow = await self.instrument.async_read_flow()
             self.record_session = ApcRecordSession(
                 session_id=current_session_id,
-                flow=flow / 1000.0,
+                flow=(flow / 1000.0) if flow is not None else 0.0,
                 deque_len=self.config.live_window_len
             )
-            
 
         except Exception as e:
             self.logger.error("Failed to initialize sampling session")
             self.logger.exception(e)
             return False
 
-        start_time = None
+        # prepare timing
         next_time = time.monotonic()
+        sample = None
+        start_time = None
 
-        # external control (early stopping)
+        # WAIT FOR REAL VALID SAMPLE -> mark session as started only when first good sample arrives
         while not self._async_stop.is_set():
             try:
+                next_time += interval
+
                 status = await self.instrument.async_read_sampling_status()
-                if self._sampling_started: 
-                    # there is an error, or sync problem... -> initiate stop.
-                    self.logger.critical("Abnormal Sampling Status detected.")
-                    await self.manual_stop_sampling()
-                    continue
-                else:
-                    if status != self.instrument.SamplingStatus.SAMPLING:
-                        # if stampling not started, then wait...
-                        await asyncio.sleep(interval)
-                        continue
+                if status == self.instrument.SamplingStatus.SAMPLING:
+                    data = await self.instrument.async_read_channels()
+                    sample = APCSample.from_dict(data)
 
-                data = await self.instrument.async_read_channels()
-                sample = APCSample.from_dict(data)
-                success = self.record_session.add_sample(sample)
+                    # Use consistent API: if APCSample has .is_valid property or method, pick one.
+                    is_valid = sample.is_valid() if callable(getattr(sample, "is_valid", None)) else getattr(sample, "is_valid", False)
 
-                if success:
-                    if not self._sampling_started:
-                        # Start session at first valid sample
-                        await self.db_handler.start_session()
+                    if is_valid:
+                        # explicitly pass the session id returned earlier.
+                        # don't rely on db_handler internal session_id unless you set it.
+                        await self.db_handler.start_sampling_session(session_id=self.record_session.session_id,
+                                                                    start_time=datetime.datetime.now(datetime.timezone.utc))
                         start_time = time.monotonic()
                         self._sampling_started = True
                         self.logger.info(f"Sampling session started (ID={self.record_session.session_id})")
+                        break
 
-                    await self.db_handler.add_sample(sample, session_id=self.record_session.session_id)
-                    next_time = (next_time if next_time > start_time else start_time) + interval
-                else:
-                    # if there is no valid data, wait...
-                    next_time += interval
-
-                # Driftfree waiting
-                sleep_time = next_time - time.monotonic()
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
-                else:
-                    self.logger.warning(f"Sampling drift ({-sleep_time:.3f}s behind schedule)")
-
-                # Time limit
-                if self._sampling_started and (time.monotonic() - start_time >= self.config.sampling_time):
-                    break
-
+                delay = next_time - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
             except asyncio.CancelledError:
-                self.logger.info("Sampling task cancelled externally.")
-                break
+                self.logger.info("Sampling task cancelled externally - before actual sampling started...")
+                return False
             except Exception as e:
-                self.logger.error("Error during sampling loop iteration")
+                self.logger.error("Error while awaiting first valid sample")
                 self.logger.exception(e)
-                await asyncio.sleep(interval)  # hiba esetén is próbálkozzunk tovább
+                return False
 
-        # Stop instrument + DB
+        # double-check we have a valid sample
+        if not isinstance(sample, APCSample):
+            self.logger.warning("No APCSample obtained at session start - aborting sampling.")
+            # try to cleanup
+            try:
+                await self.instrument.async_stop_sampling()
+                await self.db_handler.end_sampling_session(session_id=self.record_session.session_id)
+            except Exception:
+                pass
+            return False
+
+        is_valid = sample.is_valid() if callable(getattr(sample, "is_valid", None)) else getattr(sample, "is_valid", False)
+        if not is_valid:
+            self.logger.warning("First sample considered invalid after check - aborting.")
+            try:
+                await self.instrument.async_stop_sampling()
+                await self.db_handler.end_sampling_session(session_id=self.record_session.session_id)
+            except Exception:
+                pass
+            return False
+
+        # --- actual sampling loop ---
+        # note: we already consumed the first valid sample into `sample`
+        # add it to record and DB
         try:
-            await self.instrument.async_stop_sampling()
-        except Exception as e:
-            self.logger.error("Failed to stop instrument sampling")
-            self.logger.exception(e)
+            # Add first sample
+            self.record_session.add_sample(sample)  # record local sliding-window
+            await self.db_handler.add_sample(sample, session_id=self.record_session.session_id)
 
-        try:
-            await self.db_handler.end_session()
-            await self.record_session.end_session()
-            
-        except Exception as e:
-            self.logger.error("Failed to end DB session")
-            self.logger.exception(e)
+            # continue periodic sampling
+            while not self._async_stop.is_set():
+                next_time += interval
+                try:
+                    data = await self.instrument.async_read_channels()
+                    sample = APCSample.from_dict(data)
 
-        self.logger.info(f"Sampling session ended (ID={self.record_session.session_id})")
-        self._sampling_started = False
+                    # add to in-memory session
+                    try:
+                        self.record_session.add_sample(sample)
+                    except Exception:
+                        self.logger.debug("record_session.add_sample() failed for a sample (ignored).")
+
+                    # persist to DB
+                    try:
+                        await self.db_handler.add_sample(sample, session_id=self.record_session.session_id)
+                    except Exception as e:
+                        self.logger.error("Failed to persist sample to DB")
+                        self.logger.exception(e)
+
+                    # drift-free sleep
+                    delay = next_time - time.monotonic()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    else:
+                        self.logger.warning(f"Sampling drift ({-delay:.3f}s behind schedule)")
+
+                    # time limit for session
+                    if self._sampling_started and (time.monotonic() - start_time >= self.config.sampling_time):
+                        break
+
+                except asyncio.CancelledError:
+                    self.logger.info("Sampling task cancelled externally.")
+                    break
+                except Exception as e:
+                    self.logger.error("Error during sampling loop iteration")
+                    self.logger.exception(e)
+                    # brief backoff before continuing
+                    await asyncio.sleep(min(interval, 0.5))
+
+        finally:
+            # Stop instrument + DB session; don't stop worker threads here — close_connections handles that
+            try:
+                await self.instrument.async_stop_sampling()
+            except Exception as e:
+                self.logger.error("Failed to stop instrument sampling")
+                self.logger.exception(e)
+
+            try:
+                await self.db_handler.end_sampling_session(session_id=self.record_session.session_id,
+                                                        end_time=datetime.datetime.now(datetime.timezone.utc))
+                self.record_session.end_session()
+            except Exception as e:
+                self.logger.error("Failed to end DB session")
+                self.logger.exception(e)
+
+            self.logger.info(f"Sampling session ended (ID={self.record_session.session_id})")
+            self._sampling_started = False
+
+        return True
 
 
     async def _watchdog_loop(self):
@@ -464,7 +547,7 @@ class ApcDataRecorder():
                     self.logger.exception(e)
 
                 # if sampling started, also check sampling status
-                if getattr(self, "_started", False):
+                if self._sampling_started:
                     try:
                         status = await self.instrument.async_read_sampling_status()
                         if status != self.instrument.SamplingStatus.SAMPLING:
@@ -512,8 +595,6 @@ class ApcDataRecorder():
         # spawn tasks
         self._sampling_task = asyncio.create_task(self._sampling_loop())
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
-
-        asyncio.gather(self._sampling_task,self._watchdog_task)
 
         self.logger.info("Recording started.")
         return True
@@ -660,7 +741,9 @@ class ApcDataRecorder():
             self._async_stop.set()
             # wait for sampling task to finish
             if self._sampling_task is not None:
+                self._sampling_task.cancel()
                 await self._sampling_task
+
             self.logger.info("Sampling stopped manually.")
         else:
             self.logger.warning("Manual stop requested, but no sampling task is running.")
@@ -672,14 +755,20 @@ class ApcDataRecorder():
                 await self.modbus_connection.close()
                 self.modbus_initialized = False
                 self.logger.info("MODBUS connection closed.")
+
+            if self.modbus_handler:
+                await self.modbus_handler.stop()
+                self.modbus_initialized = False
+                self.logger.info("MODBUS HANDLER worker closed.")
+
         except Exception as e:
-            self.logger.error("Error during closing MODBUS connection.")
+            self.logger.error("Error during stopping MODBUS handler.")
             self.logger.error(str(e))
             return False
 
         try:
             if self.db_handler:
-                await self.db_handler.close()
+                await self.db_handler.stop()
                 self.db_initialized = False
                 self.logger.info("Database connection closed.")
         except Exception as e:
@@ -688,7 +777,6 @@ class ApcDataRecorder():
             return False
         
         self.instrument_initialized = False
-
 
 
         return True
