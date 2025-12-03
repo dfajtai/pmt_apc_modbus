@@ -7,6 +7,7 @@ import threading
 import asyncio
 
 from sqlalchemy import select, inspect
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncEngine, AsyncSession, AsyncConnection
 from sqlalchemy.pool import StaticPool, NullPool
 
@@ -41,8 +42,8 @@ class AsyncDBHandler(Generic[T]):
         self._session_factory: Optional[async_sessionmaker] = None
         self._is_db_connected: bool = False       
                 
-        self._lock = asyncio.Lock()
-        self._queue: asyncio.Queue[Optional[QueueItem]] = asyncio.Queue()
+        self._lock: Optional[asyncio.Lock] = None
+        self._queue: Optional[asyncio.Queue[Optional[QueueItem]]] = None
         self._worker_task: Optional[asyncio.Task] = None
 
         self._sampling_session_id = None
@@ -75,6 +76,12 @@ class AsyncDBHandler(Generic[T]):
             raise RuntimeError(
                 "Worker is not running. Call start() before submitting jobs."
             )
+        
+        if self._queue is None or self._lock is None:
+            raise RuntimeError(
+                "Queue or Lock is not initialized. Call start() before submitting jobs."
+            )
+        
         try:
             if self._loop is not None:
                 future = self._loop.create_future()
@@ -93,7 +100,13 @@ class AsyncDBHandler(Generic[T]):
         self._logger.debug("DB Worker task started.")
 
         while True:
-            item = await self._queue.get()
+            try:
+                # Use a longer timeout to avoid missing jobs
+                item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # nincs új job, csak folytatjuk a loop-ot
+                self._logger.debug("DB Worker queue timeout, continuing...")
+                continue
 
             if item is None:
                 self._queue.task_done()
@@ -121,7 +134,7 @@ class AsyncDBHandler(Generic[T]):
         database_url = f"sqlite+aiosqlite:///{self._config.db_path.resolve()}"
         self._engine = create_async_engine(
             database_url,
-            echo=True,
+            echo=False,
             future=True,
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
@@ -181,7 +194,7 @@ class AsyncDBHandler(Generic[T]):
         try:
             # the connect() context manager return a RAW session, capable to run SELECT 1 for connection validation
             async with self._engine.connect() as conn:
-                await conn.execute("SELECT 1")
+                await conn.execute(text("SELECT 1"))
             return True
         except Exception as e:
             self._logger.error(f"DB connection check failed: {e}")
@@ -191,6 +204,39 @@ class AsyncDBHandler(Generic[T]):
 
     async def start(self):
         """Connect to DB -> Initialize DB -> START worker task"""
+        current_loop = asyncio.get_running_loop()
+        self._logger.debug(f"[start] Current event loop: {id(current_loop)}")
+        # remember the loop where the worker and queue live
+        self._loop = current_loop
+        
+        # If worker task exists and is from a different loop, stop it
+        if self._worker_task is not None and not self._worker_task.done():
+            try:
+                task_loop = self._worker_task.get_loop()
+                if task_loop != current_loop:
+                    self._logger.info(f"[start] Worker task is from different event loop, recreating...")
+                    self._worker_task.cancel()
+                    self._queue = None  # Force queue recreation
+                    self._lock = None
+                else:
+                    self._logger.debug("Worker task already running in current loop")
+                    return
+            except Exception as e:
+                self._logger.debug(f"[start] Could not get task loop: {e}, recreating...")
+                self._queue = None
+                self._lock = None
+                self._worker_task = None
+        
+        self._logger.debug(f"[start] Initializing AsyncDBHandler in event loop {id(current_loop)}")
+        
+        # Initialize the queue and lock in the current event loop
+        if self._queue is None:
+            self._logger.debug(f"[start] Creating new queue and lock in current event loop")
+            self._queue = asyncio.Queue()
+            self._lock = asyncio.Lock()
+        else:
+            self._logger.debug(f"[start] Queue and lock already exist")
+        
         await self.connect()
         await self.initialize_db()
         self._worker_task = asyncio.create_task(self._worker_loop())
@@ -201,9 +247,9 @@ class AsyncDBHandler(Generic[T]):
         if self._logger:
             self._logger.info("Stopping AsyncDBHandler...")
 
-        await self._queue.put(None)
-
-        await self._queue.join()
+        if self._queue is not None:
+            await self._queue.put(None)
+            await self._queue.join()
     
         if self._worker_task:
             await self._worker_task

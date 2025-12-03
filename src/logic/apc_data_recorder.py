@@ -47,7 +47,7 @@ class ApcRecordSession():
         pass
 
     def add_sample(self, sample:APCSample):
-        if not sample.is_valid():
+        if not sample.is_valid:
             return False
 
         if self.session_start is None: # implicitly starts 
@@ -131,6 +131,10 @@ class ApcDataRecorder():
             file_handler.setFormatter(formatter)
             self.logger.addHandler(file_handler)
 
+            #TODO DEBUG
+            console_handler = logging.StreamHandler() 
+            self.logger.addHandler(console_handler)
+
         # config / components
         self.config_handler: Optional[AppConfigHandler] = None
         self.config: Optional[AppConfig] = None
@@ -187,7 +191,7 @@ class ApcDataRecorder():
                 # public check that DOES NOT reconnect
 
                 await self.modbus_handler.start()
-
+                await asyncio.sleep(0.3)
                 ok = await self.modbus_handler.check_connection()
                 if not ok:
                     raise ModbusException("Initial modbus health-check failed")
@@ -347,15 +351,20 @@ class ApcDataRecorder():
             start_success = False
             while True:
                 try:
+                    self.logger.debug(f"Attempting to start sampling (trial {start_trials})")
                     start_success = await self.instrument.async_start_sampling()
+                    self.logger.debug(f"async_start_sampling() returned: {start_success}")
                     if start_success:
+                        self.logger.info("Sampling started successfully on instrument")
                         break
                     if start_trials > 4:
+                        self.logger.error(f"Max start trials ({start_trials}) exceeded")
                         break
                     start_trials += 1
                     await asyncio.sleep(1.0)
-                except Exception:
+                except Exception as e:
                     # swallow, try again
+                    self.logger.debug(f"Exception during start attempt {start_trials}: {e}")
                     start_trials += 1
                     await asyncio.sleep(0.2)
 
@@ -393,18 +402,26 @@ class ApcDataRecorder():
         start_time = None
 
         # WAIT FOR REAL VALID SAMPLE -> mark session as started only when first good sample arrives
+        wait_attempts = 0
+        max_wait_attempts = 100  # timeout: ~10 seconds at 1 sample/sec
+        
         while not self._async_stop.is_set():
             try:
                 next_time += interval
+                wait_attempts += 1
 
                 status = await self.instrument.async_read_sampling_status()
+                self.logger.debug(f"[Wait Sample] Status: {status}, Attempt: {wait_attempts}")
+                
                 if status == self.instrument.SamplingStatus.SAMPLING:
                     data = await self.instrument.async_read_channels()
+                    self.logger.debug(f"[Wait Sample] Channel data: {data}")
+                    
                     sample = APCSample.from_dict(data)
 
-                    # Use consistent API: if APCSample has .is_valid property or method, pick one.
-                    is_valid = sample.is_valid() if callable(getattr(sample, "is_valid", None)) else getattr(sample, "is_valid", False)
+                    is_valid = sample.is_valid
 
+                    self.logger.debug(f"[Wait Sample] Sample valid: {is_valid}")
                     if is_valid:
                         # explicitly pass the session id returned earlier.
                         # don't rely on db_handler internal session_id unless you set it.
@@ -414,6 +431,13 @@ class ApcDataRecorder():
                         self._sampling_started = True
                         self.logger.info(f"Sampling session started (ID={self.record_session.session_id})")
                         break
+                else:
+                    self.logger.debug(f"[Wait Sample] Not in SAMPLING state, current: {status}")
+
+                # timeout check
+                if wait_attempts > max_wait_attempts:
+                    self.logger.error(f"Timeout waiting for first valid sample after {max_wait_attempts} attempts")
+                    return False
 
                 delay = next_time - time.monotonic()
                 if delay > 0:
@@ -422,7 +446,7 @@ class ApcDataRecorder():
                 self.logger.info("Sampling task cancelled externally - before actual sampling started...")
                 return False
             except Exception as e:
-                self.logger.error("Error while awaiting first valid sample")
+                self.logger.error(f"Error while awaiting first valid sample (attempt {wait_attempts})")
                 self.logger.exception(e)
                 return False
 
@@ -437,7 +461,7 @@ class ApcDataRecorder():
                 pass
             return False
 
-        is_valid = sample.is_valid() if callable(getattr(sample, "is_valid", None)) else getattr(sample, "is_valid", False)
+        is_valid = sample.is_valid
         if not is_valid:
             self.logger.warning("First sample considered invalid after check - aborting.")
             try:
@@ -526,8 +550,11 @@ class ApcDataRecorder():
             self.logger.warning("Watchdog cannot start: recorder not initialized.")
             return
 
+        await asyncio.sleep(5.0) # initial delay
+
         self.logger.info("Watchdog task started.")
-        interval = 1.0  # check every 1 second
+        interval = 5.0  # check every 10.0 second
+        next_time = time.monotonic() + interval
         try:
             while True:
                 # exit if no sampling task
@@ -557,8 +584,10 @@ class ApcDataRecorder():
                     except Exception as e:
                         self.logger.error("Watchdog error reading sampling status")
                         self.logger.exception(e)
-
-                await asyncio.sleep(interval)
+                delay= next_time - time.monotonic()
+                if delay>0:
+                    await asyncio.sleep(interval)
+                next_time +=interval
 
         except asyncio.CancelledError:
             self.logger.info("Watchdog task cancelled.")
@@ -643,38 +672,55 @@ class ApcDataRecorder():
     def _thread_main(self):
         """
         Entry point for the background thread: creates an asyncio loop and runs start/stop there.
+        Fully async-safe: uses await asyncio.sleep() instead of blocking time.sleep().
         """
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         self._thread_started.set()
 
+        async def _main_async():
+            try:
+                # Initialize all components
+                await self.initialize()
+                # Start recording
+                await self.start_recording()
+
+                # Keep running until stop_event is set
+                while not self._stop_event.is_set():
+                    await asyncio.sleep(1.0)
+
+                # Stop tasks gracefully
+                await self.stop_recording()
+                await self.close_connections()
+
+            except Exception as e:
+                self.logger.error("Background thread encountered an exception.")
+                self.logger.exception(e)
+            finally:
+                # Cancel any remaining tasks
+                pending = [t for t in asyncio.all_tasks(loop=self._loop) if not t.done()]
+                for t in pending:
+                    t.cancel()
+                # Allow cancellations to propagate
+                # await asyncio.sleep(0)
+                self.logger.info("Background thread exiting.")
+
+        # Run the async main
         try:
-            # run initialize + start + keep running until stop_event set
-            self._loop.run_until_complete(self.initialize())
-            self._loop.run_until_complete(self.start_recording())
-            # block until stop_event is set by external call
-            while not self._stop_event.is_set():
-                time.sleep(0.2)
-            # stop tasks
-            self._loop.run_until_complete(self.stop_recording())
-            # close connections
-            self._loop.run_until_complete(self.close_connections())
+            self._loop.run_until_complete(_main_async())
+            self._loop.close()
+        except asyncio.CancelledError:
+            self.logger.info("Background thread cancelled.")
         except Exception as e:
             self.logger.error("Background thread encountered an exception.")
             self.logger.exception(e)
         finally:
-            try:
-                pending = asyncio.all_tasks(loop=self._loop)
-                for t in pending:
-                    t.cancel()
-                self._loop.run_until_complete(asyncio.sleep(0))  # let cancellations run
-            except Exception:
-                pass
-            try:
-                self._loop.close()
-            except Exception:
-                pass
-            self.logger.info("Background thread exiting.")
+            # Cancel any remaining tasks
+            pending = [t for t in asyncio.all_tasks(loop=self._loop) if not t.done()]
+            for t in pending:
+                t.cancel()
+            self.logger.info("Background thread exited.")
+
 
     def init_thread(self)->threading.Thread:
         if self._thread and self._thread.is_alive():

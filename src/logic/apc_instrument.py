@@ -54,7 +54,7 @@ class PmtApcInstrument:
 
     async def async_read_device_status(self):
         status_query = ModbusQuery("read_sampling_status",30214,1)
-        response = await self.relay.read_coil(status_query)
+        response = await self.relay.read_input(status_query)
 
         return PmtApcInstrument.DeviceStatus(response)
 
@@ -70,17 +70,31 @@ class PmtApcInstrument:
     async def async_start_sampling(self)-> bool:
         if self.logger:
             self.logger.debug("Starting sampling over MODBUS ....")
+            self.logger.debug(f"relay type: {type(self.relay)}, relay is None: {self.relay is None}")
 
         control_query = ModbusQuery("control_sampling",2,1,writeable=True)
         
-        res = await self.relay.write_coil(control_query,True)
+        if self.logger:
+            self.logger.debug(f"About to call write_coil with query: {control_query}")
+        
+        try:
+            res = await self.relay.write_coil(control_query,1)
+            if self.logger:
+                self.logger.debug(f"write_coil returned: {res}")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Exception in write_coil: {e}")
+                self.logger.exception(e)
+            return False
 
         if self.logger:
             self.logger.debug("Sampling status over MODBUS modified")
 
         if res:
+            self.sampling_status = self.SamplingStatus.SAMPLING
             return True
         
+        self.sampling_status = self.SamplingStatus.NOT_SAMPLING
         return False
     
 
@@ -88,6 +102,7 @@ class PmtApcInstrument:
         control_query = ModbusQuery("control_sampling",2,1,writeable=True)
         res = await self.relay.write_coil(control_query,False)
         if res:
+            self.sampling_status = self.SamplingStatus.NOT_SAMPLING
             return True
         return False
 

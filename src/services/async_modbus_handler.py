@@ -68,12 +68,11 @@ class AsyncModbusHandler:
         self.logger = logger or logging.getLogger(__name__)
         self.test_address = test_address
 
-        self._lock = asyncio.Lock()
-        self._queue: asyncio.Queue[Optional[QueueItem]] = asyncio.Queue()
-        self._worker_task: Optional[asyncio.Task] = None
-
-        # --- THREAD-SAFE EVENT LOOP ---
+        # self._lock = asyncio.Lock()
+        # Store the loop and defer queue creation to start()
         self._loop = loop
+        self._queue: Optional[asyncio.Queue[Optional[QueueItem]]] = None
+        self._worker_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -84,8 +83,37 @@ class AsyncModbusHandler:
 
         This method **must** be called before submitting any Modbus requests.
         """
-        if self._worker_task is not None:
-            return
+        current_loop = asyncio.get_running_loop()
+        self.logger.debug(f"[start] Current event loop: {id(current_loop)}")
+        
+        # If worker task exists and is from a different loop, stop it
+        if self._worker_task is not None and not self._worker_task.done():
+            # Check if we need to recreate the worker for the new loop
+            try:
+                task_loop = self._worker_task.get_loop()
+                if task_loop != current_loop:
+                    self.logger.info(f"[start] Worker task is from different event loop, recreating...")
+                    # Cancel the old worker
+                    self._worker_task.cancel()
+                    await asyncio.sleep(0)  # Allow cancellation to propagate
+                    self._queue = None  # Force queue recreation
+                else:
+                    self.logger.debug("Worker task already running in current loop")
+                    return
+            except Exception as e:
+                self.logger.debug(f"[start] Could not get task loop: {e}, recreating...")
+                self._queue = None
+                self._worker_task = None
+
+        self.logger.debug(f"[start] Initializing AsyncModbusHandler in event loop {id(current_loop)}")
+        
+        # Initialize the queue in the current event loop if not already done
+        if self._queue is None:
+            self.logger.debug(f"[start] Creating new queue in current event loop")
+            self._queue = asyncio.Queue()
+            self.logger.debug(f"[start] Created queue id={id(self._queue)}")
+        else:
+            self.logger.debug(f"[start] Queue already exists")
 
         await self.connection.connect()
         self._worker_task = asyncio.create_task(self._worker())
@@ -115,7 +143,7 @@ class AsyncModbusHandler:
         if self._worker_task:
             await self._worker_task
             self._worker_task = None
-            
+
         # Close the underlying connection
         await self.connection.close()
         self.logger.info("AsyncModbusHandler stopped.")
@@ -146,22 +174,54 @@ class AsyncModbusHandler:
         Raises
         ------
         RuntimeError
-            If the worker is not running.
+            If the worker is not running or queue is not initialized.
         """
+
         if self._worker_task is None:
             raise RuntimeError(
                 "Worker is not running. Call start() before submitting jobs."
             )
 
-        # future: asyncio.Future = asyncio.Future()
+        if self._queue is None:
+            raise RuntimeError(
+                "Queue is not initialized. Call start() before submitting jobs."
+            )
 
-        if self._loop is not None:
-            future = self._loop.create_future()
-        else:
+        self.logger.debug(f"[_submit_job] Submitting job: {coro_func.__name__}")
+
+        # Always create Future on the currently running loop to avoid
+        # attaching a Future created on one loop to a Task running on
+        # another loop (which raises RuntimeError).
+        try:
             future = asyncio.get_running_loop().create_future()
+            self.logger.debug(f"[_submit_job] Created future using current running loop")
+        except Exception as e:
+            self.logger.error(f"[_submit_job] ERROR creating future: {e}")
+            raise
 
-        await self._queue.put((coro_func, args, future))
-        return await future
+        self.logger.debug(f"[_submit_job] About to put job in queue: {coro_func.__name__} (queue id={id(self._queue)})")
+        try:
+            await self._queue.put((coro_func, args, future))
+            self.logger.debug(f"[_submit_job] Job successfully put in queue: {coro_func.__name__}")
+            try:
+                qsize = self._queue.qsize()
+            except Exception:
+                qsize = None
+            self.logger.debug(f"[_submit_job] Queue size after put: {qsize}")
+            try:
+                tasks = list(asyncio.all_tasks())
+                self.logger.debug(f"[_submit_job] all_tasks count={len(tasks)}")
+                self.logger.debug(f"[_submit_job] worker_task id={id(self._worker_task)} present={any(id(t)==id(self._worker_task) for t in tasks)}")
+            except Exception:
+                pass
+        except Exception as e:
+            self.logger.error(f"[_submit_job] ERROR putting job in queue: {e}")
+            self.logger.exception(e)
+            raise
+        self.logger.debug(f"[_submit_job] Job queued, now waiting for future: {coro_func.__name__}")
+        result = await future
+        self.logger.debug(f"[_submit_job] Future resolved for: {coro_func.__name__}, result: {result}")
+        return result
 
     # ------------------------------------------------------------------ #
     # Worker thread
@@ -179,7 +239,22 @@ class AsyncModbusHandler:
         self.logger.debug("MODBUS Worker task started.")
 
         while True:
-            item = await self._queue.get()
+            self.logger.debug("MODBUS Worker waiting job...")
+            try:
+                # Use a longer timeout to avoid missing jobs
+                    item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                    try:
+                        item_repr = f"{type(item)}"
+                        if isinstance(item, tuple) and len(item) >= 1:
+                            func = item[0]
+                            item_repr = getattr(func, "__name__", repr(func))
+                    except Exception:
+                        item_repr = str(type(item))
+                    self.logger.debug(f"[worker] got item from queue id={id(self._queue)} -> {item_repr}")
+            except asyncio.TimeoutError:
+                # nincs új job, csak folytatjuk a loop-ot
+                self.logger.debug("MODBUS Worker queue timeout, continuing...")
+                continue
 
             if item is None:
                 self._queue.task_done()
@@ -188,13 +263,21 @@ class AsyncModbusHandler:
             coro_func, args, future = item
 
             try:
-                result = await coro_func(*args)
+                # Timeout és hiba kezelése minden job-ra
+                self.logger.debug(f"MODBUS Worker processing job: {coro_func.__name__}")
+
+                result = await asyncio.wait_for(coro_func(*args), timeout=5.0)
                 if not future.done():
                     future.set_result(result)
+                self.logger.debug(f"MODBUS Worker processed job: {coro_func.__name__}")
+            except asyncio.TimeoutError:
+                self.logger.warning(f"MODBUS Worker job timeout: {coro_func.__name__}")
+                if not future.done():
+                    future.set_exception(asyncio.TimeoutError())
             except Exception as exc:
+                self.logger.error(f"MODBUS Worker job exception: {coro_func.__name__} -> {exc}")
                 if not future.done():
                     future.set_exception(exc)
-                self.logger.error(f"Error in Modbus worker: {exc}")
             finally:
                 self._queue.task_done()
 
@@ -212,16 +295,15 @@ class AsyncModbusHandler:
         Any
             The active Modbus client instance, or None if reconnection failed.
         """
-        async with self._lock:
-            if not self.connection.is_connected:
-                try:
-                    await self.connection.connect()
-                    self.logger.debug("Reconnected to Modbus server.")
-                except Exception as exc:
-                    self.logger.error(
-                        f"Failed to reconnect Modbus client: {exc}"
-                    )
-            return self.connection.client
+        if not self.connection.is_connected:
+            try:
+                await self.connection.connect()
+                self.logger.debug("Reconnected to Modbus server.")
+            except Exception as exc:
+                self.logger.error(
+                    f"Failed to reconnect Modbus client: {exc}"
+                )
+        return self.connection.client
 
     # ------------------------------------------------------------------ #
     # Connection check
@@ -240,11 +322,12 @@ class AsyncModbusHandler:
             if client is None:
                 return False
             try:
-                result = await client.read_coils(self.test_address, count=1)
+                result = await client.read_input_registers(self.test_address, count=1)
                 return not result.isError()
             except Exception:
                 return False
-
+            
+        # async with self._lock:
         return await self._submit_job(_check_impl)
 
     # ------------------------------------------------------------------ #
@@ -264,6 +347,7 @@ class AsyncModbusHandler:
         Any
             Parsed value from the returned register block.
         """
+        # async with self._lock:
         return await self._submit_job(self._read_input_impl, query)
 
     async def _read_input_impl(self, query: ModbusQuery) -> Any:
@@ -296,6 +380,7 @@ class AsyncModbusHandler:
         """
         Read Modbus holding registers.
         """
+        # async with self._lock:
         return await self._submit_job(self._read_holding_impl, query)
 
     async def _read_holding_impl(self, query: ModbusQuery) -> Any:
@@ -328,6 +413,7 @@ class AsyncModbusHandler:
         bool
             The coil state (True/False).
         """
+        # async with self._lock:
         return await self._submit_job(self._read_coil_impl, query)
 
     async def _read_coil_impl(self, query: ModbusQuery) -> bool:
@@ -360,7 +446,7 @@ class AsyncModbusHandler:
         self,
         query: ModbusQuery,
         value: int
-    ) -> None:
+    ) -> bool:
         """
         Write a single Modbus register.
 
@@ -369,6 +455,7 @@ class AsyncModbusHandler:
         value : int
             The integer value to store in the register.
         """
+        # async with self._lock:
         return await self._submit_job(
             self._write_register_impl, query, value
         )
@@ -377,7 +464,7 @@ class AsyncModbusHandler:
         self,
         query: ModbusQuery,
         value: int
-    ) -> None:
+    ) -> bool:
         """Worker implementation for writing a register."""
         client = await self._get_client()
         if client is None:
@@ -393,15 +480,18 @@ class AsyncModbusHandler:
             raise ModbusException(
                 f"Error writing register at {query.register}: {result}"
             )
+            return False
+        return True
 
     async def write_registers(
         self,
         query: ModbusQuery,
         values: List[int]
-    ) -> None:
+    ) -> bool:
         """
         Write multiple registers in one Modbus command.
         """
+        # async with self._lock:
         return await self._submit_job(
             self._write_registers_impl, query, values
         )
@@ -410,7 +500,7 @@ class AsyncModbusHandler:
         self,
         query: ModbusQuery,
         values: List[int]
-    ) -> None:
+    ) -> bool:
         """Worker implementation for writing multiple registers."""
         client = await self._get_client()
         if client is None:
@@ -426,12 +516,14 @@ class AsyncModbusHandler:
             raise ModbusException(
                 f"Error writing registers at {query.register}: {result}"
             )
+            return False
+        return True
 
     async def write_coil(
         self,
         query: ModbusQuery,
         value: bool
-    ) -> None:
+    ) -> bool:
         """
         Write a single coil.
 
@@ -440,6 +532,7 @@ class AsyncModbusHandler:
         value : bool
             True or False to set the coil.
         """
+        # async with self._lock:
         return await self._submit_job(
             self._write_coil_impl, query, value
         )
@@ -448,7 +541,7 @@ class AsyncModbusHandler:
         self,
         query: ModbusQuery,
         value: bool
-    ) -> None:
+    ) -> bool:
         """Worker implementation for writing a coil."""
         client = await self._get_client()
         if client is None:
@@ -464,3 +557,5 @@ class AsyncModbusHandler:
             raise ModbusException(
                 f"Error writing coil at {query.register}: {result}"
             )
+            return False
+        return True

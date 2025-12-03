@@ -11,132 +11,145 @@ from services.async_db_handler import AsyncDBHandler
 from logic.apc_sample import APCSample
 from logic.apc_instrument import PmtApcInstrument
 
-from logic.apc_data_recorder import ApcDataRecorder, ApcRecordSession
+from logic.apc_data_recorder import ApcDataRecorder
 
 
+# -----------------------------
+# SYNC TEST
+# -----------------------------
 def sync_test():
-    config_handler = AppConfigHandler("../config.json")
-    config = config_handler.initialize_defaults()
+    config = AppConfigHandler("../config.json").initialize_defaults()
 
     connection = ModbusConnection(config=config)
     handler = ModbusHandler(connection=connection)
 
-    instrument = PmtApcInstrument(relay = handler)
-    i = 0
+    instrument = PmtApcInstrument(relay=handler)
+
     instrument.start_sampling()
-    while(True):
-        print(instrument.read_sampling_status())
-        print(instrument.read_flow())
+
+    for i in range(5):
+        print("Status:", instrument.read_sampling_status())
+        print("Flow:", instrument.read_flow())
         time.sleep(1)
-        i+=1
-        if i>=5:
-            break
-    
+
     instrument.stop_sampling()
-    instrument.read_sampling_status()
+    print("Stopped:", instrument.read_sampling_status())
 
 
-async def async_init(config:AppConfig):
+# -----------------------------
+# ASYNC INIT HELPERS
+# -----------------------------
+async def async_init(config: AppConfig):
     connection = AsyncModbusConnection(config=config)
     handler = AsyncModbusHandler(connection=connection)
+
+    # ensures client connects
     await handler._get_client()
     return connection, handler
 
-async def async_test(sample_rate_hz: float = 1.0, print_last = False):
-    config_handler = AppConfigHandler("../config.json")
-    config = config_handler.initialize_defaults()
 
-    connection, handler  = await async_init(config)
-    
+# -----------------------------
+# ASYNC TEST
+# -----------------------------
+async def async_test(sample_rate_hz: float = 1.0, print_last=False):
+    config = AppConfigHandler("../config.json").initialize_defaults()
 
-    db_handler = AsyncDBHandler(sample_model= APCSample, config = config)
+    connection, handler = await async_init(config)
+    db_handler = AsyncDBHandler(sample_model=APCSample, config=config)
+
     await db_handler.connect(create_session=False)
 
+    # optional: print last DB content
     if print_last:
         sessions = await db_handler.get_all_sessions()
         for s in sessions:
-            print(str(s))
+            print(s)
 
-        last_session_id = await db_handler.get_last_session_id()
+        last = await db_handler.get_last_session_id()
+        samples = await db_handler.get_samples_for_session(last)
+        for row in samples:
+            print(row)
 
-        samples = await db_handler.get_samples_for_session(last_session_id)
-        for s in samples:
-            print(str(s))
         await db_handler.close()
-        sys.exit()
+        await connection.close()
+        return
 
-    instrument = PmtApcInstrument(relay = handler)
-    i = 0
+    instrument = PmtApcInstrument(relay=handler)
 
     await instrument.async_start_sampling()
     await db_handler.create_session()
     await db_handler.start_session()
-    
+
     interval = 1.0 / sample_rate_hz
-    start_time = time.monotonic()
     next_time = time.monotonic()
-    
-    while(True):
-        start_monotonic = time.monotonic()
-        print(start_monotonic-start_time)
 
-        print(await instrument.async_read_sampling_status())
-        print(await instrument.async_read_flow())
-        data = await instrument.async_read_channels()
+    for i in range(30):
+        print("T:", time.monotonic())
 
-        await db_handler.add_sample(APCSample.from_dict(data))
+        status = await instrument.async_read_sampling_status()
+        flow = await instrument.async_read_flow()
+        channels = await instrument.async_read_channels()
 
-        # 3) --- Driftmentes várakozás ---
+        print("Status:", status)
+        print("Flow:", flow)
+
+        await db_handler.add_sample(APCSample.from_dict(channels))
+
+        # drift-less wait
         next_time += interval
         sleep_time = next_time - time.monotonic()
+
         if sleep_time > 0:
             await asyncio.sleep(sleep_time)
         else:
-            # ha Modbus + DB lassabb volt → skip sleep, logoljuk
-            print(f"WARNING: sampling drift ({sleep_time:.3f}s behind schedule)")
-        i+=1
-        if i>=30:
-            break
-        
+            print(f"WARNING: sampling drift ({sleep_time:.3f}s behind)")
+
     await instrument.async_stop_sampling()
     await db_handler.end_session()
 
-    last_session_id = await db_handler.get_last_session_id()
-    samples = await db_handler.get_samples_for_session(session_id=last_session_id)
-    print(await db_handler.get_session())
+    last = await db_handler.get_last_session_id()
+    samples = await db_handler.get_samples_for_session(last)
+
+    print("Session:", await db_handler.get_session())
 
     for s in samples:
-        print(str(s))
+        print(s)
 
     await db_handler.close()
     await connection.close()
 
+
 def simple_tests():
-    is_async = True
+    asyncio.run(async_test())
 
-    if not is_async:
-        sync_test()
-    else:
-        asyncio.run(async_test())
 
+# -----------------------------
+# RECORDER TEST
+# -----------------------------
 async def initialize_recorder():
-    recorder = ApcDataRecorder(True)
+    recorder = ApcDataRecorder()
     await recorder.initialize()
-
     return recorder
 
 
-
 def thread_test():
-    recorder = asyncio.run(initialize_recorder())
-    assert isinstance(recorder,ApcDataRecorder)
+    # Create recorder but do NOT initialize it in the main thread.
+    # Initializing in the thread ensures async primitives (queues, tasks)
+    # are created on the thread's event loop and not bound to the main loop.
+    recorder = ApcDataRecorder()
     recorder.start_in_thread()
-    recorder.thread_obj.join()
+    
+    time.sleep(30)
+    recorder.manual_stop_sampling()
+    recorder.stop_thread()
+
+    # Wait for the recorder thread to exit
+    # recorder.thread_obj.join()
 
 
-
-if __name__ == "__main__": 
+# -----------------------------
+# MAIN ENTRY
+# -----------------------------
+if __name__ == "__main__":
     # simple_tests()
-
     thread_test()
-
