@@ -4,7 +4,6 @@ import sys
 
 from logic.config_handler import AppConfig, AppConfigHandler
 
-from services.modbus_handler import ModbusConnection, ModbusHandler
 from services.async_modbus_handler import AsyncModbusConnection, AsyncModbusHandler
 from services.async_db_handler import AsyncDBHandler
 
@@ -14,26 +13,6 @@ from logic.apc_instrument import PmtApcInstrument
 from logic.apc_data_recorder import ApcDataRecorder
 
 
-# -----------------------------
-# SYNC TEST
-# -----------------------------
-def sync_test():
-    config = AppConfigHandler("../config.json").initialize_defaults()
-
-    connection = ModbusConnection(config=config)
-    handler = ModbusHandler(connection=connection)
-
-    instrument = PmtApcInstrument(relay=handler)
-
-    instrument.start_sampling()
-
-    for i in range(5):
-        print("Status:", instrument.read_sampling_status())
-        print("Flow:", instrument.read_flow())
-        time.sleep(1)
-
-    instrument.stop_sampling()
-    print("Stopped:", instrument.read_sampling_status())
 
 
 # -----------------------------
