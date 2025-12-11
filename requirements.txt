@@ -2,5 +2,6 @@ asyncio
 pydantic
 aiosqlite
 sqlalchemy
-pyside6
 pymodbus
+pyside6
+pyqtgraph
