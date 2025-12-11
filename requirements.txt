@@ -4,6 +4,5 @@ aiosqlite
 sqlalchemy
 pymodbus
 pyside6
-pyside6-addong
 pyqtgraph
 matplotlib

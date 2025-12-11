@@ -7,6 +7,8 @@ from logic.config_handler import AppConfig, AppConfigHandler
 from services.async_modbus_handler import AsyncModbusConnection, AsyncModbusHandler
 from services.async_db_handler import AsyncDBHandler
 
+from dummy.dummy_async_modbus_handler import DummyAsyncModbusHandler
+
 from logic.apc_sample import APCSample
 from logic.apc_instrument import PmtApcInstrument
 
