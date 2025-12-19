@@ -69,6 +69,6 @@ if __name__ == "__main__":
     
     # Abszolút utak a script mappájából
     build_ui(script_dir / "apc_main_window.ui", script_dir / "apc_main_window_ui.py")
-    build_ui(script_dir / "channelViewWidget.ui", script_dir / "channelViewWidget_ui.py")
+    build_ui(script_dir / "channel_view_widget.ui", script_dir / "channel_view_widget_ui.py")
     
     print("🎉 All UIs compiled!")

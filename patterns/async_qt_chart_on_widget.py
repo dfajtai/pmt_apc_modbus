@@ -18,6 +18,9 @@ import sys
 import os
 import random
 
+# Add project root to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 os.environ["QT_API"] = "PySide6"
 
 from PySide6 import QtCore, QtWidgets
@@ -27,6 +30,8 @@ from PySide6.QtCore import QFile
 from matplotlib.backends.backend_qtagg import FigureCanvas
 from matplotlib.figure import Figure
 
+from src.ui.apc_main_window_ui import Ui_APCMainWindow
+from src.ui.channel_view_widget_ui  import Ui_ChannelViewWidget
 
 class AsyncDataSource:
     def __init__(self, signal_amplitude=10, noise_amplitude=5.0, period=1, phase=0.5, maxlen=100):
@@ -96,26 +101,24 @@ class MplCanvas(FigureCanvas):
                            QtWidgets.QSizePolicy.Expanding)
 
 
-class CustomChartWidget(QtWidgets.QWidget):
+class CustomChartWidget(QtWidgets.QWidget,Ui_ChannelViewWidget):
     def __init__(self, channel_name: str, 
                  canvas: FigureCanvas, 
                  get_data_func: Callable = None,
                  parent=None):
         super().__init__(parent)
-        loader = QUiLoader()
-        self.ui = loader.load("patterns/ui/channelViewWidget.ui", self)
+        self.setupUi(self)
 
         # Add canvas to layout
         self.canvas = canvas
-        self.ui.realtime_layout.addWidget(self.canvas)
-        self.ui.channel_name_label.setText(channel_name)
+        self.realtime_layout.addWidget(self.canvas)
+        self.channel_name_label.setText(channel_name)
 
         # Ensure widget expands
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                            QtWidgets.QSizePolicy.Expanding)
 
-        self.setLayout(self.ui.layout())
-
+    
         self._plot_refs = None
 
         self._get_data_func = get_data_func
@@ -154,56 +157,53 @@ def sliding_mean(x: np.ndarray, window: int) -> np.ndarray:
     return np.convolve(x, kernel, mode='same')
 
 
-class MainWindow(QtWidgets.QMainWindow):
+class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setupUi(self)
 
-        loader = QUiLoader()
+        n_data = 100
+        self.source = AsyncDataSource(maxlen=n_data,period=5)
+                
+        wrapper = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout()
 
-        ui_file = QFile("patterns/ui/apc_main_window.ui")
-        ui_file.open(QFile.ReadOnly)
-        self.ui = loader.load(ui_file, self)   # self a parent, root egy QWidget a .ui-ból
-        ui_file.close()
-
-        self.setCentralWidget(self.ui)         # NEM setLayout()!
-
-        # n_data = 100
-        # self.source = AsyncDataSource(maxlen=n_data,period=5)
-        # self.source.start()
-
-        
-        # wrapper = QtWidgets.QWidget()
-        # layout = QtWidgets.QVBoxLayout()
-
-        # w1 = CustomChartWidget("Channel 1",MplCanvas(self), parent=self, get_data_func=self.source.get_data)
+        w1 = CustomChartWidget("Channel 1",MplCanvas(self), parent=self, get_data_func=self.source.get_data)
     
 
-        # def get_data_channel_2():
-        #     xdata, ydata = self.source.get_data()
-        #     if not ydata:
-        #         return xdata, []
-        #     y1, y2, y3 = zip(*ydata)
-        #     y1 = savgol_filter(y1, window_length=21, polyorder=3)
-        #     y2 = savgol_filter(y2, window_length=21, polyorder=3)
-        #     y3 = savgol_filter(y3, window_length=21, polyorder=3)
+        def get_data_channel_2():
+            xdata, ydata = self.source.get_data()
+            if not ydata:
+                return xdata, []
+            y1, y2, y3 = zip(*ydata)
+            y1 = savgol_filter(y1, window_length=21, polyorder=3)
+            y2 = savgol_filter(y2, window_length=21, polyorder=3)
+            y3 = savgol_filter(y3, window_length=21, polyorder=3)
 
-        #     return xdata, list(zip(y1,y2,y3))
+            return xdata, list(zip(y1,y2,y3))
 
-        # w2 = CustomChartWidget("Channel 2", MplCanvas(self), parent=self, get_data_func=lambda: get_data_channel_2())
+        w2 = CustomChartWidget("Channel 2", MplCanvas(self), parent=self, get_data_func=lambda: get_data_channel_2())
 
-        # layout.addWidget(w1)
-        # layout.addWidget(w2)
-        # wrapper.setLayout(layout)
+        layout.addWidget(w1)
+        layout.addWidget(w2)
+        wrapper.setLayout(layout)
+        self.view_layout.addWidget(wrapper)
         
-        
-        # self.timer = QtCore.QTimer()
-        # self.timer.setInterval(10)
-        # def update_both():
-        #     w1.update_plot()
-        #     w2.update_plot()
-        # self.timer.timeout.connect(update_both)
-        # self.timer.start()
+        self.source.start()
+        while True:
+            if len(self.source.x_data)>30:
+                break
+            time.sleep(0.1)
+            
+
+        self.timer = QtCore.QTimer()
+        self.timer.setInterval(100)
+        def update_both():
+            w1.update_plot()
+            w2.update_plot()
+        self.timer.timeout.connect(update_both)
+        self.timer.start()
 
     
 

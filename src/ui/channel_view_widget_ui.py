@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'channelViewWidget.ui'
+## Form generated from reading UI file 'channel_view_widget.ui'
 ##
 ## Created by: Qt User Interface Compiler version 6.10.1
 ##
@@ -18,15 +18,15 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
 from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout, QGroupBox,
     QLabel, QSizePolicy, QVBoxLayout, QWidget)
 
-class Ui_channelViewWidget(object):
-    def setupUi(self, channelViewWidget):
-        if not channelViewWidget.objectName():
-            channelViewWidget.setObjectName(u"channelViewWidget")
-        channelViewWidget.setEnabled(True)
-        channelViewWidget.resize(413, 305)
-        self.widget_layout = QGridLayout(channelViewWidget)
+class Ui_ChannelViewWidget(object):
+    def setupUi(self, ChannelViewWidget):
+        if not ChannelViewWidget.objectName():
+            ChannelViewWidget.setObjectName(u"ChannelViewWidget")
+        ChannelViewWidget.setEnabled(True)
+        ChannelViewWidget.resize(413, 305)
+        self.widget_layout = QGridLayout(ChannelViewWidget)
         self.widget_layout.setObjectName(u"widget_layout")
-        self.stats_gb = QGroupBox(channelViewWidget)
+        self.stats_gb = QGroupBox(ChannelViewWidget)
         self.stats_gb.setObjectName(u"stats_gb")
         self.stats_gb.setMinimumSize(QSize(0, 135))
         self.stats_gb.setMaximumSize(QSize(16777215, 135))
@@ -164,7 +164,7 @@ class Ui_channelViewWidget(object):
 
         self.widget_layout.addWidget(self.stats_gb, 2, 0, 1, 3)
 
-        self.realtime_gb = QGroupBox(channelViewWidget)
+        self.realtime_gb = QGroupBox(ChannelViewWidget)
         self.realtime_gb.setObjectName(u"realtime_gb")
         self.realtime_gb.setMinimumSize(QSize(0, 120))
         self.realtime_layout = QVBoxLayout(self.realtime_gb)
@@ -172,7 +172,7 @@ class Ui_channelViewWidget(object):
 
         self.widget_layout.addWidget(self.realtime_gb, 1, 0, 1, 3)
 
-        self.channel_name_label = QLabel(channelViewWidget)
+        self.channel_name_label = QLabel(ChannelViewWidget)
         self.channel_name_label.setObjectName(u"channel_name_label")
         self.channel_name_label.setMinimumSize(QSize(0, 20))
         self.channel_name_label.setMaximumSize(QSize(16777215, 20))
@@ -184,31 +184,31 @@ class Ui_channelViewWidget(object):
         self.widget_layout.addWidget(self.channel_name_label, 0, 0, 1, 1)
 
 
-        self.retranslateUi(channelViewWidget)
+        self.retranslateUi(ChannelViewWidget)
 
-        QMetaObject.connectSlotsByName(channelViewWidget)
+        QMetaObject.connectSlotsByName(ChannelViewWidget)
     # setupUi
 
-    def retranslateUi(self, channelViewWidget):
-        channelViewWidget.setWindowTitle(QCoreApplication.translate("channelViewWidget", u"channelViewWidget", None))
-        self.stats_gb.setTitle(QCoreApplication.translate("channelViewWidget", u"Statistics", None))
-        self.label_9.setText(QCoreApplication.translate("channelViewWidget", u"\u2211 count / m3", None))
-        self.label_6.setText(QCoreApplication.translate("channelViewWidget", u"w. time [HH:mm:ss]", None))
-        self.label_8.setText(QCoreApplication.translate("channelViewWidget", u"w. count", None))
-        self.label_7.setText(QCoreApplication.translate("channelViewWidget", u"w. volume [m3]", None))
-        self.label_3.setText(QCoreApplication.translate("channelViewWidget", u"\u2211 count", None))
-        self.label_5.setText(QCoreApplication.translate("channelViewWidget", u"\u2211 volume [m3]", None))
+    def retranslateUi(self, ChannelViewWidget):
+        ChannelViewWidget.setWindowTitle(QCoreApplication.translate("ChannelViewWidget", u"channelViewWidget", None))
+        self.stats_gb.setTitle(QCoreApplication.translate("ChannelViewWidget", u"Statistics", None))
+        self.label_9.setText(QCoreApplication.translate("ChannelViewWidget", u"\u2211 count / m3", None))
+        self.label_6.setText(QCoreApplication.translate("ChannelViewWidget", u"w. time [HH:mm:ss]", None))
+        self.label_8.setText(QCoreApplication.translate("ChannelViewWidget", u"w. count", None))
+        self.label_7.setText(QCoreApplication.translate("ChannelViewWidget", u"w. volume [m3]", None))
+        self.label_3.setText(QCoreApplication.translate("ChannelViewWidget", u"\u2211 count", None))
+        self.label_5.setText(QCoreApplication.translate("ChannelViewWidget", u"\u2211 volume [m3]", None))
         self.sum_count.setText("")
         self.sum_count_per_m3.setText("")
-        self.label.setText(QCoreApplication.translate("channelViewWidget", u"\u2211 time [HH:mm:ss]", None))
+        self.label.setText(QCoreApplication.translate("ChannelViewWidget", u"\u2211 time [HH:mm:ss]", None))
         self.sum_volume.setText("")
         self.sum_time.setText("")
-        self.label_12.setText(QCoreApplication.translate("channelViewWidget", u"w. count / m3", None))
+        self.label_12.setText(QCoreApplication.translate("ChannelViewWidget", u"w. count / m3", None))
         self.w_time.setText("")
         self.w_volume.setText("")
         self.w_count.setText("")
         self.w_count_per_m3.setText("")
-        self.realtime_gb.setTitle(QCoreApplication.translate("channelViewWidget", u"Realtime Data", None))
-        self.channel_name_label.setText(QCoreApplication.translate("channelViewWidget", u"Channel Name", None))
+        self.realtime_gb.setTitle(QCoreApplication.translate("ChannelViewWidget", u"Realtime Data", None))
+        self.channel_name_label.setText(QCoreApplication.translate("ChannelViewWidget", u"Channel Name", None))
     # retranslateUi
 
