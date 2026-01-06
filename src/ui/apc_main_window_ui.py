@@ -16,11 +16,12 @@ from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient,
     QIcon, QImage, QKeySequence, QLinearGradient,
     QPainter, QPalette, QPixmap, QRadialGradient,
     QTransform)
-from PySide6.QtWidgets import (QApplication, QFormLayout, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMainWindow,
-    QPushButton, QSizePolicy, QSpacerItem, QStatusBar,
-    QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser,
-    QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout,
+    QFrame, QGroupBox, QHBoxLayout, QHeaderView,
+    QLabel, QLineEdit, QMainWindow, QPushButton,
+    QSizePolicy, QSpacerItem, QStatusBar, QTabWidget,
+    QTableView, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QWidget)
 
 class Ui_APCMainWindow(object):
     def setupUi(self, APCMainWindow):
@@ -136,28 +137,28 @@ class Ui_APCMainWindow(object):
         self.control_gb.setObjectName(u"control_gb")
         self.verticalLayout = QVBoxLayout(self.control_gb)
         self.verticalLayout.setObjectName(u"verticalLayout")
-        self.pushButton = QPushButton(self.control_gb)
-        self.pushButton.setObjectName(u"pushButton")
+        self.connect_btn = QPushButton(self.control_gb)
+        self.connect_btn.setObjectName(u"connect_btn")
 
-        self.verticalLayout.addWidget(self.pushButton)
+        self.verticalLayout.addWidget(self.connect_btn)
 
-        self.pushButton_2 = QPushButton(self.control_gb)
-        self.pushButton_2.setObjectName(u"pushButton_2")
-        self.pushButton_2.setEnabled(False)
+        self.start_btn = QPushButton(self.control_gb)
+        self.start_btn.setObjectName(u"start_btn")
+        self.start_btn.setEnabled(False)
 
-        self.verticalLayout.addWidget(self.pushButton_2)
+        self.verticalLayout.addWidget(self.start_btn)
 
-        self.pushButton_3 = QPushButton(self.control_gb)
-        self.pushButton_3.setObjectName(u"pushButton_3")
-        self.pushButton_3.setEnabled(False)
+        self.stop_btn = QPushButton(self.control_gb)
+        self.stop_btn.setObjectName(u"stop_btn")
+        self.stop_btn.setEnabled(False)
 
-        self.verticalLayout.addWidget(self.pushButton_3)
+        self.verticalLayout.addWidget(self.stop_btn)
 
-        self.pushButton_4 = QPushButton(self.control_gb)
-        self.pushButton_4.setObjectName(u"pushButton_4")
-        self.pushButton_4.setEnabled(False)
+        self.disconnect_btn = QPushButton(self.control_gb)
+        self.disconnect_btn.setObjectName(u"disconnect_btn")
+        self.disconnect_btn.setEnabled(False)
 
-        self.verticalLayout.addWidget(self.pushButton_4)
+        self.verticalLayout.addWidget(self.disconnect_btn)
 
 
         self.verticalLayout_3.addWidget(self.control_gb)
@@ -166,10 +167,49 @@ class Ui_APCMainWindow(object):
         self.groupBox.setObjectName(u"groupBox")
         self.verticalLayout_2 = QVBoxLayout(self.groupBox)
         self.verticalLayout_2.setObjectName(u"verticalLayout_2")
-        self.textBrowser = QTextBrowser(self.groupBox)
-        self.textBrowser.setObjectName(u"textBrowser")
+        self.log_tableview = QTableView(self.groupBox)
+        self.log_tableview.setObjectName(u"log_tableview")
 
-        self.verticalLayout_2.addWidget(self.textBrowser)
+        self.verticalLayout_2.addWidget(self.log_tableview)
+
+        self.frame = QFrame(self.groupBox)
+        self.frame.setObjectName(u"frame")
+        self.frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self.frame.setFrameShadow(QFrame.Shadow.Raised)
+        self.horizontalLayout_2 = QHBoxLayout(self.frame)
+        self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
+        self.label_5 = QLabel(self.frame)
+        self.label_5.setObjectName(u"label_5")
+
+        self.horizontalLayout_2.addWidget(self.label_5)
+
+        self.log_level_combobox = QComboBox(self.frame)
+        self.log_level_combobox.setObjectName(u"log_level_combobox")
+
+        self.horizontalLayout_2.addWidget(self.log_level_combobox)
+
+        self.label_6 = QLabel(self.frame)
+        self.label_6.setObjectName(u"label_6")
+
+        self.horizontalLayout_2.addWidget(self.label_6)
+
+        self.log_text_filter = QLineEdit(self.frame)
+        self.log_text_filter.setObjectName(u"log_text_filter")
+
+        self.horizontalLayout_2.addWidget(self.log_text_filter)
+
+        self.horizontalSpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.horizontalLayout_2.addItem(self.horizontalSpacer)
+
+        self.log_autoscroll_checkbox = QCheckBox(self.frame)
+        self.log_autoscroll_checkbox.setObjectName(u"log_autoscroll_checkbox")
+        self.log_autoscroll_checkbox.setChecked(True)
+
+        self.horizontalLayout_2.addWidget(self.log_autoscroll_checkbox)
+
+
+        self.verticalLayout_2.addWidget(self.frame)
 
 
         self.verticalLayout_3.addWidget(self.groupBox)
@@ -245,11 +285,14 @@ class Ui_APCMainWindow(object):
         self.pushButton_7.setText(QCoreApplication.translate("APCMainWindow", u"PushButton", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.config_tab), QCoreApplication.translate("APCMainWindow", u"Config", None))
         self.control_gb.setTitle(QCoreApplication.translate("APCMainWindow", u"Control", None))
-        self.pushButton.setText(QCoreApplication.translate("APCMainWindow", u"Connect", None))
-        self.pushButton_2.setText(QCoreApplication.translate("APCMainWindow", u"Start", None))
-        self.pushButton_3.setText(QCoreApplication.translate("APCMainWindow", u"Stop", None))
-        self.pushButton_4.setText(QCoreApplication.translate("APCMainWindow", u"Disconnect", None))
+        self.connect_btn.setText(QCoreApplication.translate("APCMainWindow", u"Connect", None))
+        self.start_btn.setText(QCoreApplication.translate("APCMainWindow", u"Start", None))
+        self.stop_btn.setText(QCoreApplication.translate("APCMainWindow", u"Stop", None))
+        self.disconnect_btn.setText(QCoreApplication.translate("APCMainWindow", u"Disconnect", None))
         self.groupBox.setTitle(QCoreApplication.translate("APCMainWindow", u"Log", None))
+        self.label_5.setText(QCoreApplication.translate("APCMainWindow", u"Level", None))
+        self.label_6.setText(QCoreApplication.translate("APCMainWindow", u"Text", None))
+        self.log_autoscroll_checkbox.setText(QCoreApplication.translate("APCMainWindow", u"Autoscroll", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.control_tab), QCoreApplication.translate("APCMainWindow", u"Control", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.view_tab), QCoreApplication.translate("APCMainWindow", u"View", None))
         self.load_session_data.setText(QCoreApplication.translate("APCMainWindow", u"Load Session Data", None))
