@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Float
 
-from model.sample_model import BaseSample
+from ..model.sample_model import BaseSample
 
 
 

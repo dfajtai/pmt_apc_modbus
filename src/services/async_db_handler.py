@@ -13,10 +13,10 @@ from sqlalchemy.pool import StaticPool, NullPool
 
 import logging
 
-from model.init import AppConfig
-from model.database_model import Base
-from model.sample_model import BaseSample
-from model.session_model import SamplingSession
+from ..model.init import AppConfig
+from ..model.database_model import Base
+from ..model.sample_model import BaseSample
+from ..model.session_model import SamplingSession
 
 
 T = TypeVar('T', bound=BaseSample)

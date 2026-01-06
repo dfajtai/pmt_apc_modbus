@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncAttrs
 
 import datetime
 
-from model.database_model import Base
+from .database_model import Base
 
 
 class SamplingSession(Base, AsyncAttrs):

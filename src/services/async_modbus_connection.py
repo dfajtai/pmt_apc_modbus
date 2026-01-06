@@ -3,7 +3,7 @@ import asyncio
 import logging
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.exceptions import ConnectionException
-from model.config_model import AppConfig
+from ..model.config_model import AppConfig
 
 
 class AsyncModbusConnection:

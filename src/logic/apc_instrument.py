@@ -6,12 +6,12 @@ import logging
 from dataclasses import dataclass
 import asyncio
 
-from model.config_model import AppConfig
-from services.modbus_query import ModbusQuery
+from ..model.config_model import AppConfig
+from ..services.modbus_query import ModbusQuery
 
 
-from services.async_modbus_connection import AsyncModbusConnection
-from services.async_modbus_handler import AsyncModbusHandler
+from ..services.async_modbus_connection import AsyncModbusConnection
+from ..services.async_modbus_handler import AsyncModbusHandler
 
 
 

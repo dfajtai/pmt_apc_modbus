@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 import logging
 
-from model.config_model import AppConfig
+from ..model.config_model import AppConfig
 
 
 class AppConfigHandler:

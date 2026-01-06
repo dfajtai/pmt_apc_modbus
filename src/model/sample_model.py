@@ -4,7 +4,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import Integer, DateTime, ForeignKey
 import datetime
 
-from model.database_model import Base
+from .database_model import Base
 
 class BaseSample(Base, AsyncAttrs):
     __abstract__ = True  # Absztrakt osztály, nem hoz létre saját táblát

@@ -2,9 +2,9 @@ from typing import Optional, Any, Callable, Coroutine, Tuple, List
 import asyncio
 import logging
 
-from services.modbus_common import ModbusException
-from services.modbus_query import ModbusQuery
-from services.async_modbus_connection import AsyncModbusConnection
+from .modbus_common import ModbusException
+from .modbus_query import ModbusQuery
+from .async_modbus_connection import AsyncModbusConnection
 
 
 QueueItem = Tuple[
