@@ -107,8 +107,6 @@ class LogTableModel(QtCore.QAbstractTableModel):
         self.endInsertRows()
 
 
-
-
 class QtLogTableBridge(QtCore.QObject):
     log_received = QtCore.Signal(object)
 
