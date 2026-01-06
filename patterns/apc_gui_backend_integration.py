@@ -36,13 +36,104 @@ from src.ui.qt_log_table import (
 from src.services.logging_callback import CallbackLoggingHandler
 
 
-class ApcGuiController:
+class BackendThread(QtCore.QThread):
+    """
+    QThread to run backend operations without blocking GUI.
+    """
+
+    # Add failure signals
+    connect_failed = QtCore.Signal()
+    start_failed = QtCore.Signal()
+    stop_failed = QtCore.Signal()
+    disconnect_failed = QtCore.Signal()
+
+    def __init__(self, recorder: ApcDataRecorder):
+        super().__init__()
+        self.recorder = recorder
+        self.loop = None
+
+    @QtCore.Slot()
+    def do_connect(self):
+        if self.loop:
+            asyncio.run_coroutine_threadsafe(self._connect(), self.loop)
+
+    @QtCore.Slot()
+    def do_start(self):
+        if self.loop:
+            asyncio.run_coroutine_threadsafe(self._start(), self.loop)
+
+    @QtCore.Slot()
+    def do_stop(self):
+        if self.loop:
+            asyncio.run_coroutine_threadsafe(self._stop(), self.loop)
+
+    @QtCore.Slot()
+    def do_disconnect(self):
+        if self.loop:
+            asyncio.run_coroutine_threadsafe(self._disconnect(), self.loop)
+
+    async def _connect(self):
+        try:
+            success = await self.recorder.initialize()
+            if success:
+                # Emit success or something
+                pass
+            else:
+                self.connect_failed.emit()
+        except Exception as e:
+            self.recorder.logger.error(f"Connect failed: {e}")
+            self.connect_failed.emit()
+
+    async def _start(self):
+        try:
+            success = await self.recorder.start_recording()
+            if not success:
+                self.start_failed.emit()
+        except Exception as e:
+            self.recorder.logger.error(f"Start failed: {e}")
+            self.start_failed.emit()
+
+    async def _stop(self):
+        try:
+            success = await self.recorder.stop_recording()
+            if not success:
+                self.stop_failed.emit()
+        except Exception as e:
+            self.recorder.logger.error(f"Stop failed: {e}")
+            self.stop_failed.emit()
+
+    async def _disconnect(self):
+        try:
+            success = await self.recorder.close_connections()
+            if not success:
+                self.disconnect_failed.emit()
+        except Exception as e:
+            self.recorder.logger.error(f"Disconnect failed: {e}")
+            self.disconnect_failed.emit()
+
+    def run(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+
+class ApcGuiController(QtCore.QObject):
     """
     Controller that integrates GUI with ApcDataRecorder backend.
     Handles FSM-like state management for GUI buttons.
     """
 
+    # Signals to communicate with backend thread
+    connect_requested = QtCore.Signal()
+    start_requested = QtCore.Signal()
+    stop_requested = QtCore.Signal()
+    disconnect_requested = QtCore.Signal()
+
+    # Signal for state changes
+    state_changed = QtCore.Signal(str)
+
     def __init__(self, recorder: ApcDataRecorder):
+        super().__init__()
         self.recorder = recorder
         self.recorder.set_state_change_callback(self.on_backend_state_change)
 
@@ -80,41 +171,22 @@ class ApcGuiController:
         if gui_state != self.state:
             # Force transition to match backend
             self.machine.set_state(gui_state)
+            self.state_changed.emit(gui_state)
             if self.gui_update_callback:
                 self.gui_update_callback()
 
-    # GUI actions that call backend
-    async def connect(self):
-        try:
-            await self.recorder.initialize()
-            self.fsm_connect()
-        except Exception as e:
-            self.recorder.logger.error(f"Connect failed: {e}")
-            self.fsm_error()
+    # GUI actions that emit signals to backend
+    def connect(self):
+        self.connect_requested.emit()
 
-    async def start_recording(self):
-        try:
-            await self.recorder.start_recording()
-            self.fsm_start()
-        except Exception as e:
-            self.recorder.logger.error(f"Start recording failed: {e}")
-            self.fsm_error()
+    def start_recording(self):
+        self.start_requested.emit()
 
-    async def stop_recording(self):
-        try:
-            await self.recorder.stop_recording()
-            self.fsm_stop()
-        except Exception as e:
-            self.recorder.logger.error(f"Stop recording failed: {e}")
-            self.fsm_error()
+    def stop_recording(self):
+        self.stop_requested.emit()
 
-    async def disconnect(self):
-        try:
-            await self.recorder.close_connections()
-            self.fsm_disconnect()
-        except Exception as e:
-            self.recorder.logger.error(f"Disconnect failed: {e}")
-            self.fsm_error()
+    def disconnect(self):
+        self.disconnect_requested.emit()
 
 
 class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
@@ -124,31 +196,54 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
         self.setupUi(self)
 
         # Backend
-        self.recorder = ApcDataRecorder()
+        self.recorder = ApcDataRecorder(file_logger=True)
         self.controller = ApcGuiController(self.recorder)
+
+        # Backend thread
+        self.backend_thread = BackendThread(self.recorder)
+
+        # Connect controller signals to backend thread slots
+        self.controller.connect_requested.connect(self.backend_thread.do_connect)
+        self.controller.start_requested.connect(self.backend_thread.do_start)
+        self.controller.stop_requested.connect(self.backend_thread.do_stop)
+        self.controller.disconnect_requested.connect(self.backend_thread.do_disconnect)
+
+        # Connect failure signals to controller error trigger
+        self.backend_thread.connect_failed.connect(lambda: self.controller.fsm_error())
+        self.backend_thread.start_failed.connect(lambda: self.controller.fsm_error())
+        self.backend_thread.stop_failed.connect(lambda: self.controller.fsm_error())
+        self.backend_thread.disconnect_failed.connect(lambda: self.controller.fsm_error())
+
+        self.backend_thread.start()  # Start the backend in thread
+
+        # Connect state change signal to update buttons
+        self.controller.state_changed.connect(self.update_buttons)
 
         # Connect controller to GUI updates
         self.controller.set_gui_update_callback(self.update_buttons)
 
-        # Buttons → Controller actions (async)
-        self.connect_btn.clicked.connect(lambda: self.run_async(self.controller.connect()))
-        self.start_btn.clicked.connect(lambda: self.run_async(self.controller.start_recording()))
-        self.stop_btn.clicked.connect(lambda: self.run_async(self.controller.stop_recording()))
-        self.disconnect_btn.clicked.connect(lambda: self.run_async(self.controller.disconnect()))
+        # Buttons → Controller actions (now sync, since backend is in thread)
+        self.connect_btn.clicked.connect(self.controller.connect)
+        self.start_btn.clicked.connect(self.controller.start_recording)
+        self.stop_btn.clicked.connect(self.controller.stop_recording)
+        self.disconnect_btn.clicked.connect(self.controller.disconnect)
 
         self.update_buttons()
 
+        # Setup logging
         self.logger = self.setup_logging()
         self.logger.info("MainWindow initialized")
 
-    def run_async(self, coro):
-        """Run async coroutine in thread-safe way."""
-        # For simplicity, assume GUI is in main thread, use asyncio.run or thread
-        # In real app, use QThread or similar
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(coro)
-        loop.close()
+        # Move bridge to main thread
+        self.bridge.moveToThread(QtCore.QThread.currentThread())
+
+    def closeEvent(self, event):
+        # Stop the backend thread on close
+        if self.backend_thread.isRunning():
+            self.backend_thread.loop.call_soon_threadsafe(self.backend_thread.loop.stop)
+            self.backend_thread.wait()
+            self.backend_thread.loop.close()  # Properly close the loop
+        event.accept()
 
     def setup_logging(self) -> logging.Logger:
         # Similar to the example
@@ -161,6 +256,8 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
             model=self.log_model,
             proxy=self.log_proxy
         )
+
+        self.log_tableview.setSortingEnabled(True)  # Enable sorting
 
         populate_log_level_combobox(self.log_level_combobox)
         connect_log_filters(
@@ -175,25 +272,41 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
             checkbox=self.log_autoscroll_checkbox
         )
 
-        logger = logging.getLogger("APC_GUI")
+        # Use the recorder's logger as the single logger
+        logger = self.recorder.logger
         logger.setLevel(logging.DEBUG)
 
+        # Add stream handler for terminal/console output
+        if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+            stream_handler = logging.StreamHandler()
+            stream_handler.setLevel(logging.DEBUG)
+            logger.addHandler(stream_handler)
+
+        # Always create bridge
+        self.bridge = QtLogTableBridge(self.log_model)
+
+        # Add GUI handler
         if not any(isinstance(h, CallbackLoggingHandler) for h in logger.handlers):
             handler = CallbackLoggingHandler()
             handler.setLevel(logging.DEBUG)
 
-            bridge = QtLogTableBridge(self.log_model)
-            handler.add_record_callback(bridge.handle_record)
+            handler.add_record_callback(self.bridge.handle_record)
 
             logger.addHandler(handler)
+        else:
+            # If handler already exists, add callback to it
+            for h in logger.handlers:
+                if isinstance(h, CallbackLoggingHandler):
+                    h.add_record_callback(self.bridge.handle_record)
+                    break
 
         # Also add recorder logs to GUI
-        self.recorder.add_log_callback(lambda msg: logger.info(msg))
+        # self.recorder.add_log_callback(lambda msg: logger.info(msg))  # Removed to avoid duplication
 
         return logger
 
-    def update_buttons(self):
-        s = self.controller.state
+    def update_buttons(self, state=None):
+        s = state if state else self.controller.state
         self.connect_btn.setEnabled(s == 'disconnected')
         self.start_btn.setEnabled(s == 'connected')
         self.disconnect_btn.setEnabled(s == 'connected')

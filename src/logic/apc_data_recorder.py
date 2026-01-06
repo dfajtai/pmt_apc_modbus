@@ -180,6 +180,8 @@ class ApcDataRecorder():
             ],
             auto_transitions=False
         )
+
+        self.logger.info("ApcDataRecorder created")
     
 
     # -------------------------
@@ -205,7 +207,7 @@ class ApcDataRecorder():
                 await self.modbus_connection.connect()
             except Exception as e:
                 self.logger.error("Error during initializing MODBUS Connection.")
-                self.logger.exception(e)
+                self.logger.error(f"Exception: {e}")
                 return False
 
             try:
@@ -219,7 +221,7 @@ class ApcDataRecorder():
                     raise ModbusException("Initial modbus health-check failed")
             except Exception as e:
                 self.logger.error("Error during initializing MODBUS Handler.")
-                self.logger.exception(e)
+                self.logger.error(f"Exception: {e}")
                 return False
 
             
@@ -237,7 +239,7 @@ class ApcDataRecorder():
 
             except Exception as e:
                 self.logger.error("Error during connecting to the database.")
-                self.logger.exception(e)
+                self.logger.error(f"Exception: {e}")
                 return False
         self.db_initialized = True
         return True
@@ -251,7 +253,7 @@ class ApcDataRecorder():
                 self.instrument = PmtApcInstrument(relay=self.modbus_handler, logger= self.logger)
             except Exception as e:
                 self.logger.error("Error during initializing instrument.")
-                self.logger.exception(e)
+                self.logger.error(f"Exception: {e}")
                 return False
         self.instrument_initialized = True
         return True

@@ -51,7 +51,7 @@ class AppConfigHandler:
         """Initialize configuration with default values."""
         self.config = AppConfig.model_validate(AppConfig.DEFAULTS)
         if self.logger:
-            self.logger.info("Config initialized form defaults.")
+            self.logger.info("Config initialized from defaults.")
         return self.config
 
     def update_from_dict(self, updates: Dict[str, Union[str, int, float, bool]]):

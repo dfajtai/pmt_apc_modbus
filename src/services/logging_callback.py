@@ -1,16 +1,21 @@
 import logging
 from typing import Callable, List
 
+from PySide6 import QtCore
 
-class CallbackLoggingHandler(logging.Handler):
+
+class CallbackLoggingHandler(QtCore.QObject, logging.Handler):
     """
     Backward compatible:
     - string callbacks still work
     - new record callbacks also supported
     """
 
+    log_record_received = QtCore.Signal(object)
+
     def __init__(self):
         super().__init__()
+        logging.Handler.__init__(self)
         self._string_callbacks: List[Callable[[str], None]] = []
         self._record_callbacks: List[Callable[[logging.LogRecord], None]] = []
 
@@ -40,6 +45,9 @@ class CallbackLoggingHandler(logging.Handler):
     # EMIT
     # ----------------------------
     def emit(self, record: logging.LogRecord):
+        # Emit signal for Qt
+        self.log_record_received.emit(record)
+
         # structured callbacks
         for cb in self._record_callbacks:
             cb(record)
