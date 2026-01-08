@@ -47,6 +47,12 @@ class BackendThread(QtCore.QThread):
     stop_failed = QtCore.Signal()
     disconnect_failed = QtCore.Signal()
 
+    # Add success signals
+    connect_success = QtCore.Signal()
+    start_success = QtCore.Signal()
+    stop_success = QtCore.Signal()
+    disconnect_success = QtCore.Signal()
+
     def __init__(self, recorder: ApcDataRecorder):
         super().__init__()
         self.recorder = recorder
@@ -76,8 +82,8 @@ class BackendThread(QtCore.QThread):
         try:
             success = await self.recorder.initialize()
             if success:
-                # Emit success or something
-                pass
+                self.recorder.logger.info("Connected successfully")
+                self.connect_success.emit()
             else:
                 self.connect_failed.emit()
         except Exception as e:
@@ -87,7 +93,9 @@ class BackendThread(QtCore.QThread):
     async def _start(self):
         try:
             success = await self.recorder.start_recording()
-            if not success:
+            if success:
+                self.start_success.emit()
+            else:
                 self.start_failed.emit()
         except Exception as e:
             self.recorder.logger.error(f"Start failed: {e}")
@@ -96,7 +104,9 @@ class BackendThread(QtCore.QThread):
     async def _stop(self):
         try:
             success = await self.recorder.stop_recording()
-            if not success:
+            if success:
+                self.stop_success.emit()
+            else:
                 self.stop_failed.emit()
         except Exception as e:
             self.recorder.logger.error(f"Stop failed: {e}")
@@ -105,7 +115,9 @@ class BackendThread(QtCore.QThread):
     async def _disconnect(self):
         try:
             success = await self.recorder.close_connections()
-            if not success:
+            if success:
+                self.disconnect_success.emit()
+            else:
                 self.disconnect_failed.emit()
         except Exception as e:
             self.recorder.logger.error(f"Disconnect failed: {e}")
@@ -132,10 +144,15 @@ class ApcGuiController(QtCore.QObject):
     # Signal for state changes
     state_changed = QtCore.Signal(str)
 
+    # Signal for backend state changes (emitted from thread)
+    backend_state_changed = QtCore.Signal(str)
+
     def __init__(self, recorder: ApcDataRecorder):
         super().__init__()
         self.recorder = recorder
-        self.recorder.set_state_change_callback(self.on_backend_state_change)
+
+        # Connect with queued connection for thread safety
+        self.backend_state_changed.connect(self._handle_backend_state_change, QtCore.Qt.QueuedConnection)
 
         # Local FSM for GUI state (mirrors backend but simpler)
         self.machine = Machine(
@@ -158,7 +175,24 @@ class ApcGuiController(QtCore.QObject):
     def set_gui_update_callback(self, callback: Callable[[], None]):
         self.gui_update_callback = callback
 
-    def on_backend_state_change(self, new_state: str):
+    # GUI actions that emit signals to backend
+    def connect(self):
+        self.connect_requested.emit()
+
+    def start_recording(self):
+        self.start_requested.emit()
+
+    def stop_recording(self):
+        self.stop_requested.emit()
+
+    def disconnect(self):
+        self.disconnect_requested.emit()
+
+    def _emit_backend_state_change(self, new_state: str):
+        self.backend_state_changed.emit(new_state)
+
+    @QtCore.Slot(str)
+    def _handle_backend_state_change(self, new_state: str):
         # Map backend states to GUI states
         state_map = {
             'uninitialized': 'disconnected',
@@ -175,19 +209,6 @@ class ApcGuiController(QtCore.QObject):
             if self.gui_update_callback:
                 self.gui_update_callback()
 
-    # GUI actions that emit signals to backend
-    def connect(self):
-        self.connect_requested.emit()
-
-    def start_recording(self):
-        self.start_requested.emit()
-
-    def stop_recording(self):
-        self.stop_requested.emit()
-
-    def disconnect(self):
-        self.disconnect_requested.emit()
-
 
 class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
 
@@ -198,6 +219,9 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
         # Backend
         self.recorder = ApcDataRecorder(file_logger=True)
         self.controller = ApcGuiController(self.recorder)
+
+        # Call set_state_change_callback after instantiation
+        self.recorder.set_state_change_callback(self.controller._emit_backend_state_change)
 
         # Backend thread
         self.backend_thread = BackendThread(self.recorder)
@@ -213,6 +237,12 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
         self.backend_thread.start_failed.connect(lambda: self.controller.fsm_error())
         self.backend_thread.stop_failed.connect(lambda: self.controller.fsm_error())
         self.backend_thread.disconnect_failed.connect(lambda: self.controller.fsm_error())
+
+        # Remove success signal connections to avoid double triggering
+        # self.backend_thread.connect_success.connect(lambda: self.controller.fsm_connect())
+        # self.backend_thread.start_success.connect(lambda: self.controller.fsm_start())
+        # self.backend_thread.stop_success.connect(lambda: self.controller.fsm_stop())
+        # self.backend_thread.disconnect_success.connect(lambda: self.controller.fsm_disconnect())
 
         self.backend_thread.start()  # Start the backend in thread
 
