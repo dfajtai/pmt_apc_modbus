@@ -131,8 +131,8 @@ class Ui_APCMainWindow(object):
         self.tabWidget.addTab(self.config_tab, "")
         self.control_tab = QWidget()
         self.control_tab.setObjectName(u"control_tab")
-        self.verticalLayout_3 = QVBoxLayout(self.control_tab)
-        self.verticalLayout_3.setObjectName(u"verticalLayout_3")
+        self.control_tab_layout = QVBoxLayout(self.control_tab)
+        self.control_tab_layout.setObjectName(u"control_tab_layout")
         self.control_gb = QGroupBox(self.control_tab)
         self.control_gb.setObjectName(u"control_gb")
         self.verticalLayout = QVBoxLayout(self.control_gb)
@@ -161,7 +161,7 @@ class Ui_APCMainWindow(object):
         self.verticalLayout.addWidget(self.disconnect_btn)
 
 
-        self.verticalLayout_3.addWidget(self.control_gb)
+        self.control_tab_layout.addWidget(self.control_gb)
 
         self.groupBox = QGroupBox(self.control_tab)
         self.groupBox.setObjectName(u"groupBox")
@@ -212,42 +212,44 @@ class Ui_APCMainWindow(object):
         self.verticalLayout_2.addWidget(self.frame)
 
 
-        self.verticalLayout_3.addWidget(self.groupBox)
+        self.control_tab_layout.addWidget(self.groupBox)
 
         self.tabWidget.addTab(self.control_tab, "")
         self.view_tab = QWidget()
         self.view_tab.setObjectName(u"view_tab")
-        self.view_layout = QVBoxLayout(self.view_tab)
-        self.view_layout.setObjectName(u"view_layout")
+        self.view_tab_layout = QVBoxLayout(self.view_tab)
+        self.view_tab_layout.setObjectName(u"view_tab_layout")
         self.tabWidget.addTab(self.view_tab, "")
         self.browse_tab = QWidget()
         self.browse_tab.setObjectName(u"browse_tab")
         self.browse_tab.setEnabled(False)
-        self.verticalLayout_4 = QVBoxLayout(self.browse_tab)
-        self.verticalLayout_4.setObjectName(u"verticalLayout_4")
+        self.browse_tab_layout = QVBoxLayout(self.browse_tab)
+        self.browse_tab_layout.setObjectName(u"browse_tab_layout")
         self.sessions_table = QTableWidget(self.browse_tab)
         self.sessions_table.setObjectName(u"sessions_table")
 
-        self.verticalLayout_4.addWidget(self.sessions_table)
+        self.browse_tab_layout.addWidget(self.sessions_table)
 
         self.load_session_data = QPushButton(self.browse_tab)
         self.load_session_data.setObjectName(u"load_session_data")
 
-        self.verticalLayout_4.addWidget(self.load_session_data)
+        self.browse_tab_layout.addWidget(self.load_session_data)
 
         self.session_data_table = QTableWidget(self.browse_tab)
         self.session_data_table.setObjectName(u"session_data_table")
 
-        self.verticalLayout_4.addWidget(self.session_data_table)
+        self.browse_tab_layout.addWidget(self.session_data_table)
 
         self.pushButton_5 = QPushButton(self.browse_tab)
         self.pushButton_5.setObjectName(u"pushButton_5")
 
-        self.verticalLayout_4.addWidget(self.pushButton_5)
+        self.browse_tab_layout.addWidget(self.pushButton_5)
 
         self.tabWidget.addTab(self.browse_tab, "")
         self.report_tab = QWidget()
         self.report_tab.setObjectName(u"report_tab")
+        self.report_tab_layout = QVBoxLayout(self.report_tab)
+        self.report_tab_layout.setObjectName(u"report_tab_layout")
         self.tabWidget.addTab(self.report_tab, "")
 
         self.main_layout.addWidget(self.tabWidget)
@@ -259,7 +261,7 @@ class Ui_APCMainWindow(object):
 
         self.retranslateUi(APCMainWindow)
 
-        self.tabWidget.setCurrentIndex(1)
+        self.tabWidget.setCurrentIndex(3)
 
 
         QMetaObject.connectSlotsByName(APCMainWindow)

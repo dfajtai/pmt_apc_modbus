@@ -82,13 +82,14 @@ class AsyncModbusConnection:
                             self.logger.info("MODBUS connection successfull.")
                         return True
                     else:
-                        raise ConnectionException("Connect returned False")
+                        raise ConnectionException("Connect attempt failed.")
 
                 except Exception as e:
                     if attempt == retry:
                         raise ConnectionException(
                             f"Failed to connect to {self.config.ip}:{self.config.port} "
-                            f"after {retry} attempts. Last error: {e}"
+                            f"after {retry} attempts.\n"
+                            f"Last error:\n{e}"
                         ) from e
 
                     await asyncio.sleep(delay)

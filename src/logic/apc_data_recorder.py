@@ -137,25 +137,52 @@ class ApcDataRecorder():
             self.logger.addHandler(console_handler)
 
         # GUI state change callback
-        self.state_change_callback = None
-        self.config_initialized = False
-        self.modbus_initialized = False
-        self.db_initialized = False
-        self.instrument_initialized = False
-        
         self.state_change_callback: Optional[Callable[[str], None]] = None
 
     def set_state_change_callback(self, callback: Callable[[str], None]):
         self.state_change_callback = callback
 
-    def on_state_change(self, new_state: str):
-        """
-        Call this method to update the state and trigger the state change callback if set.
-        """
-        self.logger.info(f"State changing to: {new_state}")
-        self.state = new_state
-        if self.state_change_callback:
-            self.state_change_callback(new_state)
+        # config / components
+        self.config_handler: Optional[AppConfigHandler] = None
+        self.config: Optional[AppConfig] = None
+
+        self.modbus_connection: Optional[AsyncModbusConnection] = None
+        self.modbus_handler: Optional[AsyncModbusHandler] = None
+
+        self.db_handler: Optional[AsyncDBHandler] = None
+
+        self.instrument: Optional[PmtApcInstrument] = None
+
+        # state flags
+        self.config_initialized = False
+        self.modbus_initialized = False
+        self.db_initialized = False
+        self.instrument_initialized = False
+
+        # runtime tasks
+        self._sampling_task: Optional[asyncio.Task] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
+
+        # recording metadata
+        self.record_session: ApcRecordSession = None
+        
+        # FSM for state management
+        self.machine = Machine(
+            model=self,
+            states=['uninitialized', 'initialized', 'recording', 'stopped', 'error'],
+            initial='uninitialized',
+            transitions=[
+                dict(trigger='fsm_initialize', source='uninitialized', dest='initialized', after='on_initialize'),
+                dict(trigger='fsm_start_recording', source='initialized', dest='recording', after='on_start_recording'),
+                dict(trigger='fsm_stop_recording', source='recording', dest='stopped', after='on_stop_recording'),
+                dict(trigger='fsm_error', source='*', dest='error', after='on_error'),
+                dict(trigger='fsm_reset', source='error', dest='uninitialized', after='on_reset'),
+            ],
+            auto_transitions=False
+        )
+
+        self.logger.info("ApcDataRecorder created")
+    
 
     # -------------------------
     # Initialization helpers
@@ -246,7 +273,7 @@ class ApcDataRecorder():
             return False
 
         self.logger.info("ApcDataRecorder initialized successfully.")
-        self.on_state_change('initialized')
+        self.fsm_initialize()
         return True
 
     @property
@@ -622,7 +649,7 @@ class ApcDataRecorder():
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
         self.logger.info("Recording started.")
-        self.on_state_change('recording')
+        self.fsm_start_recording()
         return True
 
     async def stop_recording(self, timeout: float = 10.0):
@@ -660,7 +687,7 @@ class ApcDataRecorder():
             pass
 
         self.logger.info("Recording stopped.")
-        self.on_state_change('stopped')
+        self.fsm_stop_recording()
         return True
 
     # -------------------------
@@ -821,7 +848,7 @@ class ApcDataRecorder():
             return False
         
         self.instrument_initialized = False
-        self.on_state_change('uninitialized')
+
 
         return True
 

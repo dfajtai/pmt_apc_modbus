@@ -20,9 +20,12 @@ os.environ["QT_API"] = "PySide6"
 
 from PySide6 import QtCore, QtWidgets
 
+from src.services.logging_callback import CallbackLoggingHandler
 from src.logic.apc_data_recorder import ApcDataRecorder
 
 from src.ui.apc_main_window_ui import Ui_APCMainWindow
+from src.ui.channel_view_widget_ui import Ui_ChannelViewWidget
+
 from src.ui.qt_log_table import (
     LogTableModel,
     QtLogTableBridge,
@@ -32,8 +35,6 @@ from src.ui.qt_log_table import (
     enable_autoscroll,
     connect_log_filters,
 )
-
-from src.services.logging_callback import CallbackLoggingHandler
 
 
 class BackendThread(QtCore.QThread):
@@ -290,7 +291,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
         self.log_tableview.setSortingEnabled(True)  # Enable sorting
 
         populate_log_level_combobox(self.log_level_combobox)
-        connect_log_filters(
+        designer_log_filters(
             proxy=self.log_proxy,
             text_filter_widget=self.log_text_filter,
             level_filter_widget=self.log_level_combobox

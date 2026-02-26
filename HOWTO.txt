@@ -1,0 +1,3 @@
+Designer:
+poetry env activate
+poetry run pyside6-designer

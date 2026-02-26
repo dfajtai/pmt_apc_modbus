@@ -52,8 +52,9 @@ from src.services.logging_callback import CallbackLoggingHandler
 # ======================================================================
 
 class AsyncDataSource:
-    def __init__(self, signal_amplitude=10, noise_amplitude=5.0,
+    def __init__(self, baseline = 10.0, signal_amplitude=10, noise_amplitude=5.0,
                  period=1, phase=0.5, maxlen=100):
+        self.baseline = baseline
         self.signal_amplitude = signal_amplitude
         self.noise_amplitude = noise_amplitude
         self.period = period
@@ -66,6 +67,13 @@ class AsyncDataSource:
         self._loop = None
         self._stop_event = None
 
+        self.start_time = None
+        self.num_of_samples = 0
+        self.accumulator = 0.0
+        self.flow = 28300.0 # ml/min, dummy.
+
+
+
     async def _generate_one(self):
         if self._t0 is None:
             self._t0 = time.monotonic()
@@ -75,8 +83,8 @@ class AsyncDataSource:
         dt = time.monotonic() - self._t0
         noise = (random.random() - 0.5) * 2 * self.noise_amplitude
 
-        v1 = self.signal_amplitude * math.sin(2 * math.pi / self.period * dt + self.phase) + noise
-        v2 = self.signal_amplitude * math.cos(2 * math.pi / self.period * dt + self.phase) + noise
+        v1 = self.baseline + self.signal_amplitude * math.sin(2 * math.pi / self.period * dt + self.phase) + noise
+        v2 = ( self.baseline / 2.0 ) + self.signal_amplitude * math.cos(2 * math.pi / self.period * dt + self.phase) + noise
         v3 = v1 + v2
 
         self.x_data.append(dt)
@@ -130,7 +138,9 @@ class CustomChartWidget(QtWidgets.QWidget, Ui_ChannelViewWidget):
     def __init__(self, channel_name: str,
                  canvas: FigureCanvas,
                  get_data_func: Callable,
+                 calc_stat_func: Callable,
                  parent=None):
+        
         super().__init__(parent)
         self.setupUi(self)
 
@@ -140,9 +150,14 @@ class CustomChartWidget(QtWidgets.QWidget, Ui_ChannelViewWidget):
 
         self._plot_refs = None
         self._get_data_func = get_data_func
+        
+        self._calc_stat_func = calc_stat_func
+        self.stats_dict = {}
 
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                            QtWidgets.QSizePolicy.Expanding)
+
+        
 
     def update_plot(self):
         xdata, ydata = self._get_data_func()
@@ -161,9 +176,36 @@ class CustomChartWidget(QtWidgets.QWidget, Ui_ChannelViewWidget):
                 ref.set_xdata(xdata)
                 ref.set_ydata(data)
 
+        
+
         self.canvas.axes.relim()
         self.canvas.axes.autoscale_view()
         self.canvas.draw()
+
+
+    def update_stats(self):
+        # hardcoded solution
+        valid_names = ["sum_time","sum_volume","sum_count","sum_count_per_m3",
+                        "w_time","w_volume","w_count","w_count_per_m3"]
+
+
+        def update_if_valid(stat_name, value, format_str="{:.2f}"):           
+            if not stat_name in valid_names:
+                return
+            
+            if value is None:
+                return "unknown"
+
+            ui_element = getattr(self, f"{stat_name}", None)
+            if ui_element is not None:
+                ui_element.setText(format_str.format(value))
+
+
+        self.stats_dict = self._calc_stat_func()
+        
+        for stat_name, value in self.stats_dict.items():
+            if stat_name in valid_names:
+                update_if_valid(stat_name, value)
 
 
 # ======================================================================
@@ -195,6 +237,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
             "Channel 1",
             MplCanvas(self),
             get_data_func=self.source.get_data,
+            calc_stat_func=self.source.calc_stats,
             parent=self
         )
 
@@ -208,23 +251,31 @@ class MainWindow(QtWidgets.QMainWindow, Ui_APCMainWindow):
             y3 = savgol_filter(y3, 21, 3)
             return x, list(zip(y1, y2, y3))
 
+        def calc_stats_2():
+            pass
+
         w2 = CustomChartWidget(
             "Channel 2",
             MplCanvas(self),
             get_data_func=get_data_channel_2,
+            calc_stat_func=calc_stats_2,
             parent=self
         )
 
         layout.addWidget(w1)
         layout.addWidget(w2)
-        self.view_layout.addWidget(wrapper)
+        self.view_tab_layout.addWidget(wrapper)
 
         # ------------------------------------------------------------------
         # Timer
         # ------------------------------------------------------------------
-        self.timer = QtCore.QTimer()
-        self.timer.setInterval(100)
-        self.timer.timeout.connect(lambda: (w1.update_plot(), w2.update_plot()))
+        self.plot_timer = QtCore.QTimer()
+        self.plot_timer.setInterval(100)
+        self.plot_timer.timeout.connect(lambda: (w1.update_plot(), w2.update_plot()))
+
+        self.stat_timer = QtCore.QTimer()
+        self.stat_timer.setInterval(5000)
+        self.stat_timer.timeout.connect(lambda: (w1.update_stats(), w2.update_stats()))
 
         # ------------------------------------------------------------------
         # FSM

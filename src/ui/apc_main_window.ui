@@ -24,7 +24,7 @@
        <bool>true</bool>
       </property>
       <property name="currentIndex">
-       <number>1</number>
+       <number>3</number>
       </property>
       <property name="usesScrollButtons">
        <bool>false</bool>
@@ -124,7 +124,7 @@
        <attribute name="title">
         <string>Control</string>
        </attribute>
-       <layout class="QVBoxLayout" name="verticalLayout_3">
+       <layout class="QVBoxLayout" name="control_tab_layout">
         <item>
          <widget class="QGroupBox" name="control_gb">
           <property name="title">
@@ -244,7 +244,7 @@
        <attribute name="title">
         <string>View</string>
        </attribute>
-       <layout class="QVBoxLayout" name="view_layout"/>
+       <layout class="QVBoxLayout" name="view_tab_layout"/>
       </widget>
       <widget class="QWidget" name="browse_tab">
        <property name="enabled">
@@ -253,7 +253,7 @@
        <attribute name="title">
         <string>Browse</string>
        </attribute>
-       <layout class="QVBoxLayout" name="verticalLayout_4">
+       <layout class="QVBoxLayout" name="browse_tab_layout">
         <item>
          <widget class="QTableWidget" name="sessions_table"/>
         </item>
@@ -280,6 +280,7 @@
        <attribute name="title">
         <string>Report</string>
        </attribute>
+       <layout class="QVBoxLayout" name="report_tab_layout"/>
       </widget>
      </widget>
     </item>

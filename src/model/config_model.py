@@ -15,7 +15,7 @@ class AppConfig(BaseModel):
         "sampling_time": 1800,
         "sampling_step": 1000,
 
-        "timeout": 100,
+        "timeout": 5, #  "Timeout for connecting and receiving data, in seconds (use decimals for milliseconds)"
 
         "live_window_len": 120,
         "moving_average_window_len": 5,
